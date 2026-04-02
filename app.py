@@ -2,12 +2,17 @@ import streamlit as st
 import numpy as np
 import librosa
 import joblib
+import tempfile
+import os
+from moviepy.editor import VideoFileClip
+import pandas as pd
 
-st.title("Delamination Detection using Acoustic Signals")
+st.title("Delamination Detection (Audio + Video Support)")
 
 # Load trained model
 model = joblib.load("model.pkl")
 
+# ---------------- FEATURE EXTRACTION ----------------
 def extract_features(signal, sr):
     mfcc = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13)
     mfcc_mean = np.mean(mfcc, axis=1)
@@ -18,17 +23,62 @@ def extract_features(signal, sr):
 
     return np.hstack([mfcc_mean, psd_mean])
 
-uploaded_file = st.file_uploader("Upload WAV file", type=["wav"])
+# ---------------- LOAD AUDIO ----------------
+def load_audio_file(file):
+    try:
+        # Save temp file
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(file.read())
+            tmp_path = tmp.name
 
-if uploaded_file is not None:
-    st.audio(uploaded_file)
+        # If MP4 → extract audio
+        if file.name.endswith(".mp4"):
+            video = VideoFileClip(tmp_path)
+            audio_path = tmp_path + ".wav"
+            video.audio.write_audiofile(audio_path, verbose=False, logger=None)
+            signal, sr = librosa.load(audio_path, sr=22050)
 
-    signal, sr = librosa.load(uploaded_file, sr=22050)
-    features = extract_features(signal, sr)
+        else:  # WAV
+            signal, sr = librosa.load(tmp_path, sr=22050)
 
-    prediction = model.predict([features])
+        return signal, sr
 
-    if prediction[0] == 0:
-        st.success("GOOD (No Delamination)")
-    else:
-        st.error("BAD (Delamination Detected)")
+    except Exception as e:
+        st.error(f"Error processing {file.name}: {e}")
+        return None, None
+
+# ---------------- UI ----------------
+uploaded_files = st.file_uploader(
+    "Upload WAV or MP4 files (single or multiple)",
+    type=["wav", "mp4"],
+    accept_multiple_files=True
+)
+
+# ---------------- PROCESS FILES ----------------
+if uploaded_files:
+    results = []
+
+    for file in uploaded_files:
+        st.write(f"Processing: {file.name}")
+
+        signal, sr = load_audio_file(file)
+
+        if signal is None:
+            continue
+
+        features = extract_features(signal, sr)
+        prediction = model.predict([features])[0]
+
+        label = "GOOD" if prediction == 0 else "BAD"
+
+        results.append({
+            "File Name": file.name,
+            "Prediction": label
+        })
+
+        st.success(f"{file.name} → {label}")
+
+    # Show results table
+    df = pd.DataFrame(results)
+    st.subheader("Summary Results")
+    st.dataframe(df)
