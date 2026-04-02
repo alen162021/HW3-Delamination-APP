@@ -3,6 +3,9 @@ import numpy as np
 import librosa
 import joblib
 
+import os
+st.write("Files in directory:", os.listdir())
+
 st.title("Delamination Detection using Acoustic Signals")
 
 # Load trained model
