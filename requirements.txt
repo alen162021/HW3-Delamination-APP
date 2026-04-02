@@ -2,6 +2,6 @@ streamlit
 librosa
 numpy
 scikit-learn
-matplotlib
-seaborn
-soundfile
+joblib
+moviepy
+pandas
