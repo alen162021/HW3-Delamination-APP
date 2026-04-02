@@ -3,5 +3,7 @@ librosa
 numpy
 scikit-learn
 joblib
-moviepy
+moviepy==1.0.3
+imageio
+imageio-ffmpeg
 pandas
