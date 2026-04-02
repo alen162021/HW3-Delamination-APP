@@ -2,17 +2,65 @@ import streamlit as st
 import numpy as np
 import librosa
 import joblib
-import tempfile
 import os
-from moviepy.editor import VideoFileClip
-import pandas as pd
 
-st.title("Delamination Detection (Audio + Video Support)")
+st.title("🔊 Delamination Detection App")
 
-# Load trained model
+# =========================
+# Load model
+# =========================
 model = joblib.load("model.pkl")
 
-# ---------------- FEATURE EXTRACTION ----------------
+# =========================
+# Audio loader (FIXED for m4a)
+# =========================
+def load_audio(file):
+    try:
+        signal, sr = librosa.load(file, sr=22050)
+    except:
+        st.warning("Standard load failed, retrying with audioread...")
+        signal, sr = librosa.load(file, sr=22050, backend="audioread")
+    return signal, sr
+
+# =========================
+# HIT SPLITTING (IMPORTANT)
+# =========================
+def split_hits(signal, sr):
+    signal = signal / np.max(np.abs(signal))
+
+    frame_length = int(0.02 * sr)
+    hop_length = int(0.01 * sr)
+
+    energy = librosa.feature.rms(
+        y=signal,
+        frame_length=frame_length,
+        hop_length=hop_length
+    )[0]
+
+    threshold = np.mean(energy) * 1.5
+    active = energy > threshold
+
+    indices = np.where(active)[0]
+
+    if len(indices) == 0:
+        return []
+
+    segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
+
+    hits = []
+    for seg in segments:
+        start = seg[0] * hop_length
+        end = seg[-1] * hop_length
+        hit = signal[start:end]
+
+        if len(hit) > 200:
+            hits.append(hit)
+
+    return hits
+
+# =========================
+# FEATURE EXTRACTION
+# =========================
 def extract_features(signal, sr):
     mfcc = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13)
     mfcc_mean = np.mean(mfcc, axis=1)
@@ -23,62 +71,63 @@ def extract_features(signal, sr):
 
     return np.hstack([mfcc_mean, psd_mean])
 
-# ---------------- LOAD AUDIO ----------------
-def load_audio_file(file):
-    try:
-        # Save temp file
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(file.read())
-            tmp_path = tmp.name
+# =========================
+# FILE PROCESSING
+# =========================
+def process_file(file, folder_name="Unknown"):
+    signal, sr = load_audio(file)
 
-        # If MP4 → extract audio
-        if file.name.endswith(".mp4"):
-            video = VideoFileClip(tmp_path)
-            audio_path = tmp_path + ".wav"
-            video.audio.write_audiofile(audio_path, verbose=False, logger=None)
-            signal, sr = librosa.load(audio_path, sr=22050)
+    hits = split_hits(signal, sr)
 
-        else:  # WAV
-            signal, sr = librosa.load(tmp_path, sr=22050)
+    if len(hits) == 0:
+        return "No hits detected", []
 
-        return signal, sr
+    predictions = []
 
-    except Exception as e:
-        st.error(f"Error processing {file.name}: {e}")
-        return None, None
+    for hit in hits:
+        features = extract_features(hit, sr)
+        pred = model.predict([features])[0]
+        predictions.append(pred)
 
-# ---------------- UI ----------------
+    # Majority vote
+    final = int(round(np.mean(predictions)))
+
+    return final, predictions
+
+# =========================
+# UI: Upload multiple files
+# =========================
 uploaded_files = st.file_uploader(
-    "Upload WAV or MP4 files (single or multiple)",
-    type=["wav", "mp4"],
+    "Upload audio files or entire dataset",
+    type=["wav", "m4a"],
     accept_multiple_files=True
 )
 
-# ---------------- PROCESS FILES ----------------
 if uploaded_files:
-    results = []
+
+    st.subheader("📊 Results")
 
     for file in uploaded_files:
-        st.write(f"Processing: {file.name}")
 
-        signal, sr = load_audio_file(file)
+        # Extract folder name if present
+        if "/" in file.name:
+            folder = file.name.split("/")[0]
+        else:
+            folder = "Single File"
 
-        if signal is None:
+        result, preds = process_file(file, folder)
+
+        st.write(f"📁 **Folder:** {folder}")
+        st.write(f"📄 **File:** {file.name}")
+
+        if result == "No hits detected":
+            st.warning("No hits detected")
             continue
 
-        features = extract_features(signal, sr)
-        prediction = model.predict([features])[0]
+        if result == 0:
+            st.success("Prediction: GOOD")
+        else:
+            st.error("Prediction: BAD")
 
-        label = "GOOD" if prediction == 0 else "BAD"
-
-        results.append({
-            "File Name": file.name,
-            "Prediction": label
-        })
-
-        st.success(f"{file.name} → {label}")
-
-    # Show results table
-    df = pd.DataFrame(results)
-    st.subheader("Summary Results")
-    st.dataframe(df)
+        st.write(f"Hit Predictions: {preds}")
+        st.write("---")
