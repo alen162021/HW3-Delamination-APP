@@ -2,25 +2,23 @@ import streamlit as st
 import numpy as np
 import librosa
 import librosa.display
-import joblib
 import matplotlib.pyplot as plt
 import tempfile
+import os
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
+st.set_page_config(page_title="HW3 Delamination ML System", layout="wide")
 
-# --- LOAD MODEL ---
-@st.cache_resource
-def load_model():
-    return joblib.load("model.pkl")
+st.title("🔊 HW3: Automated Delamination ML Pipeline")
 
-try:
-    model = load_model()
-except Exception:
-    st.error("Error: Could not find 'model.pkl'. Make sure it is uploaded to your repo.")
-    st.stop()
-
-# --- AUDIO LOADING (FIXED FOR M4A/WAV) ---
+# --- AUDIO LOADING ---
 def load_audio(file):
     suffix = "." + file.name.split(".")[-1]
 
@@ -38,20 +36,18 @@ def split_hits(signal, sr):
     frame_length = int(0.02 * sr)
     hop_length = int(0.01 * sr)
 
-    energy = librosa.feature.rms(
-        y=signal,
-        frame_length=frame_length,
-        hop_length=hop_length
-    )[0]
+    energy = librosa.feature.rms(y=signal,
+                                 frame_length=frame_length,
+                                 hop_length=hop_length)[0]
 
     indices = np.where(energy > np.mean(energy) * 1.5)[0]
 
     if len(indices) == 0:
-        return [], []
+        return []
 
     segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
 
-    hits, boundaries = [], []
+    hits = []
     for seg in segments:
         start = seg[0] * hop_length
         end = seg[-1] * hop_length
@@ -59,140 +55,139 @@ def split_hits(signal, sr):
 
         if len(hit) > 200:
             hits.append(hit)
-            boundaries.append((start, end))
 
-    return hits, boundaries
+    return hits
 
 # --- FEATURE EXTRACTION ---
 def extract_features(signal, sr):
     mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13), axis=1)
-    psd_mean = np.mean(np.abs(np.fft.fft(signal))**2)
-    return np.hstack([mfcc, psd_mean])
+    psd = np.mean(np.abs(np.fft.fft(signal))**2)
+    return np.hstack([mfcc, psd])
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("🔍 Science Behind the Sound")
+# --- DATASET BUILDER ---
+def build_dataset(files):
+    X, y = [], []
 
-    with st.expander("What is the Time Domain?"):
-        st.write("Healthy blocks ring longer; damaged ones decay faster due to internal energy loss.")
+    for file in files:
+        signal, sr = load_audio(file)
+        hits = split_hits(signal, sr)
 
-    with st.expander("What is the Frequency Graph?"):
-        st.write("Damage reduces stiffness → shifts energy to lower frequencies.")
+        label = 1 if "_b" in file.name.lower() else 0
 
-    with st.expander("What are MFCCs?"):
-        st.write("MFCCs capture the acoustic fingerprint used by the AI for classification.")
+        for h in hits:
+            features = extract_features(h, sr)
+            X.append(features)
+            y.append(label)
 
-    st.divider()
-    st.caption("""
-    This project was partially sponsored by a **Teaching Innovation Program (TIP) grant**, 
-    **Smart Materials and Structures Laboratory (SMSL)**, and 
-    **Artificial Intelligent Laboratory for Monitoring and Inspection**, 
-    University of Houston.
-    """)
+    return np.array(X), np.array(y)
 
-# --- MAIN UI ---
-st.title("🔊 Composite Structural Health Monitor")
-st.write("Upload percussion recordings to detect internal defects.")
+# --- MODEL TRAINING ---
+def train_models(X_train, y_train):
+    models = {
+        "KNN": KNeighborsClassifier(n_neighbors=5),
+        "Decision Tree": DecisionTreeClassifier(),
+        "Logistic Regression": LogisticRegression(max_iter=1000),
+        "SVM": SVC(probability=True)
+    }
 
-uploaded_files = st.file_uploader(
-    "Upload Audio (.wav or .m4a)",
+    for name, model in models.items():
+        model.fit(X_train, y_train)
+
+    return models
+
+# --- EVALUATION ---
+def evaluate_model(model, X, y):
+    preds = model.predict(X)
+    acc = accuracy_score(y, preds)
+    cm = confusion_matrix(y, preds)
+    return acc, cm
+
+# --- UI ---
+st.header("📂 Upload HW3 Dataset (Training + Validation)")
+train_files = st.file_uploader(
+    "Upload HW3 audio files (multiple allowed)",
     type=["wav", "m4a"],
     accept_multiple_files=True
 )
 
-# --- PROCESS FILES ---
-if uploaded_files:
-    for file in uploaded_files:
+st.header("📂 Upload HW2 Dataset (Unseen Test Data)")
+test_files = st.file_uploader(
+    "Upload HW2 audio files",
+    type=["wav", "m4a"],
+    accept_multiple_files=True
+)
 
-        with st.expander(f"Analysis: {file.name}", expanded=True):
+if train_files:
 
-            signal, sr = load_audio(file)
-            hits, boundaries = split_hits(signal, sr)
+    st.subheader("🔄 Building Dataset...")
+    X, y = build_dataset(train_files)
 
-            if not hits:
-                st.warning("No hits detected.")
-                continue
+    st.write(f"Total samples: {len(X)}")
 
-            # --- FEATURE EXTRACTION ---
-            features = [extract_features(h, sr) for h in hits]
+    # --- SPLIT ---
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.3, shuffle=True, random_state=42
+    )
 
-            preds = model.predict(features)
+    st.subheader("🤖 Training Models...")
+    models = train_models(X_train, y_train)
 
-            # --- CONFIDENCE (FIXED) ---
-            if hasattr(model, "predict_proba"):
-                probs = model.predict_proba(features)[:, 1]
-                confidence = np.mean(probs)
-            else:
-                confidence = np.mean(preds)
+    results = []
 
-            is_bad = confidence > 0.5
+    st.subheader("📊 Results (Training & Validation)")
 
-            # --- RESULTS DISPLAY ---
-            col_res, col_plot = st.columns([1, 1.5])
+    for name, model in models.items():
 
-            with col_res:
-                if is_bad:
-                    st.error("### ❌ DEFECT DETECTED")
-                    st.metric("Confidence (Damage)", f"{confidence*100:.1f}%")
-                else:
-                    st.success("### ✅ HEALTHY")
-                    st.metric("Confidence (Healthy)", f"{(1-confidence)*100:.1f}%")
+        train_acc, train_cm = evaluate_model(model, X_train, y_train)
+        val_acc, val_cm = evaluate_model(model, X_val, y_val)
 
-                st.info(f"Analyzed {len(hits)} hits")
+        st.markdown(f"### {name}")
 
-            # --- TIME DOMAIN PLOT ---
-            with col_plot:
-                fig, ax = plt.subplots(figsize=(7, 2.5))
-                ax.plot(signal, color='gray', alpha=0.4)
+        col1, col2 = st.columns(2)
 
-                for start, end in boundaries:
-                    ax.axvspan(start, end,
-                               color='red' if is_bad else 'green',
-                               alpha=0.3)
+        with col1:
+            st.write("Training Accuracy:", round(train_acc, 4))
+            st.write("Confusion Matrix:")
+            st.write(train_cm)
 
-                ax.set_title("Detected Hits (Time Domain)")
-                ax.set_axis_off()
-                st.pyplot(fig)
+        with col2:
+            st.write("Validation Accuracy:", round(val_acc, 4))
+            st.write("Confusion Matrix:")
+            st.write(val_cm)
 
-            # --- PER-HIT RESULTS ---
-            st.subheader("📊 Per-Hit Predictions")
+        results.append({
+            "Model": name,
+            "Train Acc": train_acc,
+            "Val Acc": val_acc
+        })
 
-            good_hits = np.sum(preds == 0)
-            bad_hits = np.sum(preds == 1)
+    # --- PART 3: TEST DATA ---
+    if test_files:
 
-            for i, p in enumerate(preds):
-                label = "BAD" if p == 1 else "GOOD"
-                st.write(f"Hit {i+1}: {label}")
+        st.subheader("🧪 Testing on HW2 (Unseen Data)")
 
-            # --- DISTRIBUTION ---
-            st.subheader("📈 Hit Distribution")
+        X_test, y_test = build_dataset(test_files)
 
-            st.write(f"GOOD hits: {good_hits}")
-            st.write(f"BAD hits: {bad_hits}")
+        for i, (name, model) in enumerate(models.items()):
 
-            st.bar_chart({
-                "GOOD": good_hits,
-                "BAD": bad_hits
-            })
+            test_acc, test_cm = evaluate_model(model, X_test, y_test)
 
-            # --- DETAILED GRAPHS ---
-            c1, c2 = st.columns(2)
+            st.markdown(f"### {name} (Test Results)")
 
-            with c1:
-                st.caption("MFCC (Acoustic Fingerprint)")
-                mfcc_vis = librosa.feature.mfcc(y=hits[0], sr=sr, n_mfcc=13)
-                fig_m, ax_m = plt.subplots(figsize=(5, 2))
-                librosa.display.specshow(mfcc_vis, ax=ax_m)
-                st.pyplot(fig_m)
+            st.write("Test Accuracy:", round(test_acc, 4))
+            st.write("Confusion Matrix:")
+            st.write(test_cm)
 
-            with c2:
-                st.caption("Frequency Energy (PSD)")
-                fft = np.abs(np.fft.fft(hits[0]))**2
-                freqs = np.fft.fftfreq(len(hits[0]), 1/sr)
+            # --- ROBUSTNESS ---
+            val_acc = results[i]["Val Acc"]
+            drop = val_acc - test_acc
 
-                fig_f, ax_f = plt.subplots(figsize=(5, 2))
-                ax_f.plot(freqs[:len(freqs)//2],
-                          fft[:len(fft)//2],
-                          color='purple')
-                ax_f.set_xlim(0, 4000)
-                st.pyplot(fig_f)
+            st.write(f"Accuracy Drop (Val → Test): {round(drop,4)}")
+
+            results[i]["Test Acc"] = test_acc
+            results[i]["Drop"] = drop
+
+    # --- FINAL TABLE ---
+    st.subheader("📋 Model Comparison Table")
+
+    st.dataframe(results)
