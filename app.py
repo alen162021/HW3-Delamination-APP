@@ -13,7 +13,6 @@ st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon=
 # --- LOAD MODEL ---
 @st.cache_resource
 def load_model():
-    # Attempt to load the model; ensure model.pkl exists in the same directory
     return joblib.load("model.pkl")
 
 try:
@@ -87,7 +86,6 @@ if uploaded_files:
                 st.warning("No hits detected.")
                 continue
 
-            # Predictions
             features = [extract_features(h, sr) for h in hits]
             preds = model.predict(features)
             
@@ -111,7 +109,6 @@ if uploaded_files:
                 st.info(f"Analyzed {len(hits)} hits")
 
             with col_plot:
-                # A. TIME DOMAIN PLOT
                 fig_time, ax_time = plt.subplots(figsize=(7, 3))
                 ax_time.plot(signal, color='gray', alpha=0.4)
                 for start, end in boundaries:
@@ -121,10 +118,11 @@ if uploaded_files:
 
             # --- DETAILED ANALYSIS GRAPHS ---
             st.divider()
-            st.subheader("🔬 Multi-Domain Signal Analysis (Hit #1)")
+            st.subheader("🔬 Multi-Domain Signal Analysis (Representative Hit)")
             sample_hit = hits[0]
             
             # B. FREQUENCY DOMAIN
+            st.write("#### B. Frequency Domain (FFT & PSD)")
             col_f1, col_f2 = st.columns(2)
             fft_vals = np.abs(np.fft.rfft(sample_hit))
             freqs = np.fft.rfftfreq(len(sample_hit), 1/sr)
@@ -132,7 +130,7 @@ if uploaded_files:
             with col_f1:
                 fig_fft, ax_fft = plt.subplots(figsize=(6, 3))
                 ax_fft.plot(freqs, fft_vals, color='teal')
-                ax_fft.set_title("Fast Fourier Transform (FFT)")
+                ax_fft.set_title("FFT (Linear Magnitude)")
                 ax_fft.set_xlabel("Frequency (Hz)")
                 ax_fft.set_xlim(0, 5000)
                 st.pyplot(fig_fft)
@@ -141,13 +139,13 @@ if uploaded_files:
                 psd = (fft_vals**2) / (len(sample_hit) * sr)
                 fig_psd, ax_psd = plt.subplots(figsize=(6, 3))
                 ax_psd.semilogy(freqs, psd, color='darkorange')
-                ax_psd.set_title("Power Spectral Density (PSD)")
+                ax_psd.set_title("PSD (Power Spectral Density)")
                 ax_psd.set_xlabel("Frequency (Hz)")
                 ax_psd.set_xlim(0, 5000)
                 st.pyplot(fig_psd)
 
             # C. TIME-FREQUENCY DOMAIN
-            st.write("#### Time-Frequency Visualizations")
+            st.write("#### C. Time-Frequency Domain (STFT, CWT, MFCC)")
             t1, t2, t3 = st.columns(3)
 
             with t1:
@@ -161,6 +159,7 @@ if uploaded_files:
             with t2:
                 st.caption("CWT (Scalogram)")
                 widths = np.arange(1, 31)
+                # Robust Ricker call to prevent AttributeError
                 cwtmatr = scipy_signal.cwt(sample_hit, scipy_signal.ricker, widths)
                 fig_cwt, ax_cwt = plt.subplots(figsize=(5, 4))
                 ax_cwt.imshow(np.abs(cwtmatr), extent=[0, len(sample_hit)/sr, 1, 31], 
