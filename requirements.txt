@@ -12,3 +12,5 @@ audioread
 ffmpeg-python
 pydub
 seaborn
+scipy
+signal
