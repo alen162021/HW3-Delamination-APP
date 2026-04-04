@@ -5,7 +5,7 @@ import librosa.display
 import joblib
 import matplotlib.pyplot as plt
 import tempfile
-from scipy import signal as scipy_signal
+import scipy.signal as scipy_signal  # Changed this line
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
