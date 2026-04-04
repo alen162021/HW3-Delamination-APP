@@ -1,16 +1,6 @@
 streamlit
 librosa
 numpy
-scikit-learn
-joblib
-moviepy==1.0.3
-imageio
-imageio-ffmpeg
-pandas
 matplotlib
-audioread
-ffmpeg-python
-pydub
-seaborn
+joblib
 scipy
-signal
