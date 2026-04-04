@@ -4,6 +4,7 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import tempfile
+import soundfile as sf
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix
@@ -12,14 +13,16 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 
-# --- PAGE CONFIG ---
+# =========================
+# PAGE CONFIG
+# =========================
 st.set_page_config(page_title="Delamination ML Lab", layout="wide", page_icon="🔊")
 
 st.title("🔊 Delamination Detection & Machine Learning Lab")
 
 st.caption("""
-This project was partially sponsored by a Teaching Innovation Program (TIP) grant, 
-Smart Materials and Structures Laboratory (SMSL), and Artificial Intelligent Laboratory 
+This project was partially sponsored by a Teaching Innovation Program (TIP) grant,
+Smart Materials and Structures Laboratory (SMSL), and Artificial Intelligent Laboratory
 for Monitoring and Inspection, University of Houston.
 """)
 
@@ -27,20 +30,41 @@ for Monitoring and Inspection, University of Houston.
 # FUNCTIONS
 # =========================
 def load_audio(file):
-    suffix = "." + file.name.split(".")[-1]
+    suffix = "." + file.name.split(".")[-1].lower()
+
+    if file.size == 0:
+        raise ValueError(f"{file.name} is empty.")
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(file.read())
         tmp_path = tmp.name
-    signal, sr = librosa.load(tmp_path, sr=22050)
-    return signal, sr
+
+    try:
+        signal, sr = sf.read(tmp_path)
+
+        if isinstance(signal, np.ndarray) and signal.ndim > 1:
+            signal = np.mean(signal, axis=1)
+
+        return signal, sr
+
+    except Exception:
+        try:
+            signal, sr = librosa.load(tmp_path, sr=22050, mono=True)
+            return signal, sr
+        except Exception as e:
+            raise ValueError(f"Could not load {file.name}: {str(e)}")
+
 
 def split_hits(signal, sr):
     signal = signal / (np.max(np.abs(signal)) + 1e-9)
+
     frame_length, hop_length = int(0.02 * sr), int(0.01 * sr)
 
-    energy = librosa.feature.rms(y=signal,
-                                 frame_length=frame_length,
-                                 hop_length=hop_length)[0]
+    energy = librosa.feature.rms(
+        y=signal,
+        frame_length=frame_length,
+        hop_length=hop_length
+    )[0]
 
     indices = np.where(energy > np.mean(energy) * 1.5)[0]
 
@@ -50,34 +74,50 @@ def split_hits(signal, sr):
     segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
 
     hits, boundaries = [], []
+
     for seg in segments:
         start, end = seg[0] * hop_length, seg[-1] * hop_length
         hit = signal[start:end]
+
         if len(hit) > 200:
             hits.append(hit)
             boundaries.append((start, end))
 
     return hits, boundaries
 
+
 def extract_features(signal, sr):
     mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13), axis=1)
     psd = np.mean(np.abs(np.fft.fft(signal))**2)
     return np.hstack([mfcc, psd])
 
+
 def build_dataset(files):
     X, y = [], []
 
     for file in files:
-        signal, sr = load_audio(file)
-        hits, _ = split_hits(signal, sr)
+        try:
+            signal, sr = load_audio(file)
+            hits, _ = split_hits(signal, sr)
 
-        label = 1 if "_b" in file.name.lower() else 0
+            if "_b" in file.name.lower():
+                label = 1
+            else:
+                label = 0
 
-        for h in hits:
-            X.append(extract_features(h, sr))
-            y.append(label)
+            for h in hits:
+                X.append(extract_features(h, sr))
+                y.append(label)
+
+        except Exception as e:
+            st.warning(f"Skipping {file.name}: {e}")
+            continue
+
+    if len(X) == 0:
+        return np.array([]), np.array([])
 
     return np.array(X), np.array(y)
+
 
 def plot_conf_matrix(cm, title):
     fig, ax = plt.subplots()
@@ -93,15 +133,20 @@ def plot_conf_matrix(cm, title):
 
     st.pyplot(fig)
 
+
 def analyze_file(file, model):
-    signal, sr = load_audio(file)
+    try:
+        signal, sr = load_audio(file)
+    except Exception as e:
+        st.error(str(e))
+        return None
+
     hits, boundaries = split_hits(signal, sr)
 
     if not hits:
         return None
 
     features = [extract_features(h, sr) for h in hits]
-
     preds = model.predict(features)
 
     if hasattr(model, "predict_proba"):
@@ -112,44 +157,8 @@ def analyze_file(file, model):
 
     return signal, sr, hits, boundaries, preds, confidence
 
-# =========================
-# SIDEBAR
-# =========================
-with st.sidebar:
-    st.header("🔍 Science Behind the Sound")
-    
-   
-    
-    # --- SIGNAL PROCESSING SECTION ---
-    st.subheader("Signal Processing")
-    with st.expander("What is the Time Domain?"):
-        st.write("It shows the sound's 'Heartbeat.' Healthy blocks ring longer; damaged blocks fade out fast due to internal friction.")
-        
-    
-    with st.expander("What is the Frequency Graph?"):
-        st.write("It shows the 'Pitch.' Delamination makes the block less stiff, which usually shifts the pitch to a lower frequency.")
-        
-    with st.expander("What is PSD (Power Spectral Density)?"):
-        st.write("It measures the 'Strength' of the sound at every pitch. It helps us see exactly which frequencies are losing energy because of internal gaps.")
-        
-        
-    with st.expander("What are MFCCs?"):
-        st.write("The 'Acoustic Fingerprint.' Our AI uses these to recognize the unique texture of a defect, much like how voice recognition identifies a person.")
-        
 
-    # --- MACHINE LEARNING SECTION ---
-    st.subheader("The 'Brain' (AI Algorithms)")
-    with st.expander("KNN (K-Nearest Neighbors)"):
-        st.write("The 'Majority Rule' approach. It looks at the current hit and finds the most similar sounds in its memory. If most of those neighbors were 'Bad,' it classifies this one as 'Bad' too.")
-        
-    with st.expander("LR (Logistic Regression)"):
-        st.write("The 'Probability' approach. It calculates the odds of a block being damaged. It’s like a sliding scale from 0 to 1; if the score crosses 0.5, the app flags a defect.")
-        
-    with st.expander("DT (Decision Tree)"):
-        st.write("The 'Flowchart' approach. It asks a series of questions: 'Is the pitch low?' 'Is the sound short?' Depending on the answers, it follows a path to the final result.")
-        
-    with st.expander("SVM (Support Vector Machine)"):
-        st.write("The 'Boundary' approach. It draws a clear line (or 'wall') between the data of healthy blocks and damaged blocks to ensure the most accurate separation.")# =========================
+# =========================
 # TABS
 # =========================
 tab1, tab2, tab3 = st.tabs(["📂 Data", "🤖 Training", "🧪 Testing"])
@@ -163,22 +172,25 @@ with tab1:
     if train_files:
         X, y = build_dataset(train_files)
 
-        st.success(f"Samples: {len(X)}")
+        if len(X) == 0:
+            st.error("No valid audio features extracted.")
+        else:
+            st.success(f"Samples: {len(X)}")
 
-        col1, col2 = st.columns(2)
+            col1, col2 = st.columns(2)
 
-        with col1:
-            unique, counts = np.unique(y, return_counts=True)
-            st.bar_chart(dict(zip(unique, counts)))
+            with col1:
+                unique, counts = np.unique(y, return_counts=True)
+                st.bar_chart(dict(zip(unique, counts)))
 
-        with col2:
-            fig, ax = plt.subplots()
-            ax.scatter(X[:, 0], X[:, 1], c=y)
-            st.pyplot(fig)
+            with col2:
+                fig, ax = plt.subplots()
+                ax.scatter(X[:, 0], X[:, 1], c=y)
+                st.pyplot(fig)
 
-        st.session_state["X"] = X
-        st.session_state["y"] = y
-        st.session_state["train_files"] = train_files
+            st.session_state["X"] = X
+            st.session_state["y"] = y
+            st.session_state["train_files"] = train_files
 
 # =========================
 # TAB 2: TRAINING
@@ -208,39 +220,34 @@ with tab2:
         for name, model in models.items():
             model.fit(X_train, y_train)
 
-            train_pred = model.predict(X_train)
-            val_pred = model.predict(X_val)
+            train_acc = accuracy_score(y_train, model.predict(X_train))
+            val_acc = accuracy_score(y_val, model.predict(X_val))
 
-            train_acc = accuracy_score(y_train, train_pred)
-            val_acc = accuracy_score(y_val, val_pred)
+            results.append({"Model": name, "Train": train_acc, "Validation": val_acc})
 
-            results.append({
-                "Model": name,
-                "Train": train_acc,
-                "Validation": val_acc
-            })
-
-        # --- FIND BEST MODEL ---
         best_index = np.argmax([r["Validation"] for r in results])
 
         for i, (name, model) in enumerate(models.items()):
             st.subheader(name)
 
             if i == best_index:
-                st.success("⭐ BEST MODEL (Highest Validation Accuracy)")
-
-            train_pred = model.predict(X_train)
-            val_pred = model.predict(X_val)
+                st.success("⭐ BEST MODEL")
 
             col1, col2 = st.columns(2)
 
             with col1:
                 st.write("Train Acc:", round(results[i]["Train"], 4))
-                plot_conf_matrix(confusion_matrix(y_train, train_pred), "Train CM")
+                plot_conf_matrix(
+                    confusion_matrix(y_train, model.predict(X_train)),
+                    "Train CM"
+                )
 
             with col2:
                 st.write("Val Acc:", round(results[i]["Validation"], 4))
-                plot_conf_matrix(confusion_matrix(y_val, val_pred), "Validation CM")
+                plot_conf_matrix(
+                    confusion_matrix(y_val, model.predict(X_val)),
+                    "Validation CM"
+                )
 
         st.session_state["models"] = models
         st.session_state["results"] = results
@@ -258,31 +265,39 @@ with tab3:
         if test_files:
             X_test, y_test = build_dataset(test_files)
 
-            fig, ax = plt.subplots()
-            ax.scatter(X_test[:, 0], X_test[:, 1], c=y_test)
-            st.pyplot(fig)
+            if len(X_test) > 0:
+                fig, ax = plt.subplots()
+                ax.scatter(X_test[:, 0], X_test[:, 1], c=y_test)
+                st.pyplot(fig)
 
             for i, (name, model) in enumerate(st.session_state["models"].items()):
                 st.subheader(name)
 
-                pred = model.predict(X_test)
-                acc = accuracy_score(y_test, pred)
+                if len(X_test) > 0:
+                    pred = model.predict(X_test)
+                    acc = accuracy_score(y_test, pred)
 
-                if i == st.session_state["best_index"]:
-                    st.success("⭐ BEST MODEL")
+                    if i == st.session_state["best_index"]:
+                        st.success("⭐ BEST MODEL")
 
-                st.write("Test Accuracy:", round(acc, 4))
-                plot_conf_matrix(confusion_matrix(y_test, pred), "Test CM")
+                    st.write("Test Accuracy:", round(acc, 4))
 
-                drop = st.session_state["results"][i]["Validation"] - acc
-                st.write("Accuracy Drop:", round(drop, 4))
+                    plot_conf_matrix(
+                        confusion_matrix(y_test, pred),
+                        "Test CM"
+                    )
+
+                    drop = st.session_state["results"][i]["Validation"] - acc
+                    st.write("Accuracy Drop:", round(drop, 4))
 
             # =========================
             # PER FILE ANALYSIS
             # =========================
             st.header("📁 Per-File Analysis (Best Model)")
 
-            best_model = list(st.session_state["models"].values())[st.session_state["best_index"]]
+            best_model = list(st.session_state["models"].values())[
+                st.session_state["best_index"]
+            ]
 
             for file in test_files:
                 with st.expander(file.name):
@@ -290,28 +305,25 @@ with tab3:
                     result = analyze_file(file, best_model)
 
                     if result is None:
-                        st.warning("No hits detected.")
+                        st.warning("No valid hits detected.")
                         continue
 
                     signal, sr, hits, boundaries, preds, confidence = result
 
-                    is_bad = confidence > 0.5
-
-                    if is_bad:
+                    if confidence > 0.5:
                         st.error(f"DEFECT DETECTED ({confidence*100:.1f}%)")
                     else:
                         st.success(f"HEALTHY ({(1-confidence)*100:.1f}%)")
 
-                    good_hits = np.sum(preds == 0)
-                    bad_hits = np.sum(preds == 1)
-
-                    st.write(f"GOOD: {good_hits} | BAD: {bad_hits}")
+                    st.write(f"GOOD: {np.sum(preds == 0)} | BAD: {np.sum(preds == 1)}")
 
                     for i, p in enumerate(preds):
                         st.write(f"Hit {i+1}: {'BAD' if p==1 else 'GOOD'}")
 
                     fig, ax = plt.subplots(figsize=(7, 2))
                     ax.plot(signal, alpha=0.4)
+
                     for s, e in boundaries:
                         ax.axvspan(s, e, alpha=0.3)
+
                     st.pyplot(fig)
