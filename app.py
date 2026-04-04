@@ -84,9 +84,10 @@ with st.sidebar:
 
     st.divider()
     st.caption("""
-    Sponsored by Teaching Innovation Program (TIP),  
-    Smart Materials and Structures Lab,  
-    University of Houston
+    This project was partially sponsored by a **Teaching Innovation Program (TIP) grant**, 
+    **Smart Materials and Structures Laboratory (SMSL)**, and 
+    **Artificial Intelligent Laboratory for Monitoring and Inspection**, 
+    University of Houston.
     """)
 
 # --- MAIN UI ---
