@@ -6,6 +6,7 @@ import joblib
 import matplotlib.pyplot as plt
 import tempfile
 import scipy.signal as signal_processing
+from scipy.signal import cwt, ricker  # Direct import to prevent AttributeError
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
@@ -54,7 +55,6 @@ def split_hits(signal, sr):
 
 # --- FEATURE EXTRACTION ---
 def extract_features(signal, sr):
-    # Fix for short hits: calculate n_fft based on signal length
     n_fft_val = min(len(signal), 2048)
     mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13, n_fft=n_fft_val), axis=1)
     psd_mean = np.mean(np.abs(np.fft.fft(signal))**2)
@@ -85,7 +85,6 @@ if uploaded_files:
 
             is_bad = confidence > 0.5
 
-            # Display results
             res_col, plot_col = st.columns([1, 1.5])
             with res_col:
                 if is_bad: st.error("### ❌ DEFECT DETECTED")
@@ -100,8 +99,8 @@ if uploaded_files:
                 st.pyplot(fig_t)
                 plt.close(fig_t)
 
-            # Detailed Analysis of first hit
             st.divider()
+            st.subheader("🔬 Multi-Domain Analysis (Hit #1)")
             sample_hit = hits[0]
             
             # Frequency Domain
@@ -124,7 +123,6 @@ if uploaded_files:
 
             # Time-Frequency Domain
             t1, t2, t3 = st.columns(3)
-            # CRITICAL: Define n_fft for the plots
             n_fft_plot = min(len(sample_hit), 2048)
 
             with t1:
@@ -137,7 +135,14 @@ if uploaded_files:
             with t2:
                 st.caption("CWT (Ricker Scalogram)")
                 widths = np.arange(1, 31)
-                cwtmatr = signal_processing.cwt(sample_hit, signal_processing.ricker, widths)
+                # FIX: Using direct imports to ensure function availability
+                try:
+                    cwtmatr = cwt(sample_hit, ricker, widths)
+                except Exception:
+                    # Fallback for older scipy versions
+                    from scipy.signal import cwt as sc_cwt, ricker as sc_ricker
+                    cwtmatr = sc_cwt(sample_hit, sc_ricker, widths)
+                
                 fig_c, ax_c = plt.subplots(figsize=(5, 4))
                 ax_c.imshow(np.abs(cwtmatr), extent=[0, len(sample_hit)/sr, 1, 31], cmap='magma', aspect='auto')
                 st.pyplot(fig_c)
