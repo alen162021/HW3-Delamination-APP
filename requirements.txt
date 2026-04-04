@@ -11,3 +11,4 @@ matplotlib
 audioread
 ffmpeg-python
 pydub
+seaborn
