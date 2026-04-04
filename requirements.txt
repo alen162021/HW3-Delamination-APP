@@ -10,3 +10,4 @@ pandas
 matplotlib
 audioread
 ffmpeg-python
+pydub
