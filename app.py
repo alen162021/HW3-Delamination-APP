@@ -6,7 +6,7 @@ import joblib
 import matplotlib.pyplot as plt
 import tempfile
 import scipy.signal as scipy_signal
-from scipy.signal import cwt, ricker # Explicitly import the functions
+from scipy.signal import cwt, ricker  # Explicit functions for CWT
 
 # --- LOAD MODEL ---
 @st.cache_resource
