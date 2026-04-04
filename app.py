@@ -23,7 +23,9 @@ Smart Materials and Structures Laboratory (SMSL), and Artificial Intelligent Lab
 for Monitoring and Inspection, University of Houston.
 """)
 
-# --- AUDIO LOADING ---
+# =========================
+# FUNCTIONS
+# =========================
 def load_audio(file):
     suffix = "." + file.name.split(".")[-1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -32,7 +34,6 @@ def load_audio(file):
     signal, sr = librosa.load(tmp_path, sr=22050)
     return signal, sr
 
-# --- HIT DETECTION ---
 def split_hits(signal, sr):
     signal = signal / (np.max(np.abs(signal)) + 1e-9)
     frame_length, hop_length = int(0.02 * sr), int(0.01 * sr)
@@ -58,13 +59,11 @@ def split_hits(signal, sr):
 
     return hits, boundaries
 
-# --- FEATURE EXTRACTION ---
 def extract_features(signal, sr):
     mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13), axis=1)
     psd = np.mean(np.abs(np.fft.fft(signal))**2)
     return np.hstack([mfcc, psd])
 
-# --- DATASET BUILDER ---
 def build_dataset(files):
     X, y = [], []
 
@@ -80,7 +79,6 @@ def build_dataset(files):
 
     return np.array(X), np.array(y)
 
-# --- HEATMAP FUNCTION ---
 def plot_conf_matrix(cm, title):
     fig, ax = plt.subplots()
     im = ax.imshow(cm)
@@ -95,66 +93,71 @@ def plot_conf_matrix(cm, title):
 
     st.pyplot(fig)
 
-# --- SIDEBAR ---
+def analyze_file(file, model):
+    signal, sr = load_audio(file)
+    hits, boundaries = split_hits(signal, sr)
+
+    if not hits:
+        return None
+
+    features = [extract_features(h, sr) for h in hits]
+
+    preds = model.predict(features)
+
+    if hasattr(model, "predict_proba"):
+        probs = model.predict_proba(features)[:, 1]
+        confidence = np.mean(probs)
+    else:
+        confidence = np.mean(preds)
+
+    return signal, sr, hits, boundaries, preds, confidence
+
+# =========================
+# SIDEBAR
+# =========================
 with st.sidebar:
-    st.header("🔍 Learn the Concepts")
+    st.header("🔍 Learn")
+    st.write("MFCC = acoustic fingerprint")
+    st.write("PSD = energy distribution")
+    st.write("Models: KNN, DT, LR, SVM")
 
-    st.markdown("""
-    **Time Domain:** Shows how sound decays over time  
-    **Frequency Domain:** Shows energy distribution  
-    **MFCC:** Acoustic fingerprint used for ML  
-    """)
-
-    st.markdown("""
-    **Models Used:**
-    - KNN
-    - Decision Tree
-    - Logistic Regression
-    - SVM
-    """)
-
-# --- TABS ---
+# =========================
+# TABS
+# =========================
 tab1, tab2, tab3 = st.tabs(["📂 Data", "🤖 Training", "🧪 Testing"])
 
-# =======================
+# =========================
 # TAB 1: DATA
-# =======================
+# =========================
 with tab1:
-    st.header("Upload Dataset")
-
-    train_files = st.file_uploader(
-        "Upload HW3 Dataset (_g / _b)",
-        accept_multiple_files=True
-    )
+    train_files = st.file_uploader("Upload HW3 Dataset (_g/_b)", accept_multiple_files=True)
 
     if train_files:
         X, y = build_dataset(train_files)
 
-        st.success(f"Extracted {len(X)} samples")
+        st.success(f"Samples: {len(X)}")
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("Label Distribution")
             unique, counts = np.unique(y, return_counts=True)
             st.bar_chart(dict(zip(unique, counts)))
 
         with col2:
-            st.subheader("Feature Scatter (MFCC1 vs MFCC2)")
-            if X.shape[1] >= 2:
-                fig, ax = plt.subplots()
-                ax.scatter(X[:, 0], X[:, 1], c=y)
-                st.pyplot(fig)
+            fig, ax = plt.subplots()
+            ax.scatter(X[:, 0], X[:, 1], c=y)
+            st.pyplot(fig)
 
         st.session_state["X"] = X
         st.session_state["y"] = y
+        st.session_state["train_files"] = train_files
 
-# =======================
+# =========================
 # TAB 2: TRAINING
-# =======================
+# =========================
 with tab2:
     if "X" not in st.session_state:
-        st.warning("Upload dataset first.")
+        st.warning("Upload data first.")
     else:
         X = st.session_state["X"]
         y = st.session_state["y"]
@@ -167,14 +170,14 @@ with tab2:
             "KNN": KNeighborsClassifier(),
             "Decision Tree": DecisionTreeClassifier(),
             "Logistic Regression": LogisticRegression(max_iter=1000),
-            "SVM": SVC()
+            "SVM": SVC(probability=True)
         }
 
         results = []
 
-        for name, model in models.items():
-            st.subheader(name)
+        st.header("Model Performance")
 
+        for name, model in models.items():
             model.fit(X_train, y_train)
 
             train_pred = model.predict(X_train)
@@ -183,40 +186,49 @@ with tab2:
             train_acc = accuracy_score(y_train, train_pred)
             val_acc = accuracy_score(y_val, val_pred)
 
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.write("Training Accuracy:", round(train_acc, 4))
-                plot_conf_matrix(confusion_matrix(y_train, train_pred), "Train CM")
-
-            with col2:
-                st.write("Validation Accuracy:", round(val_acc, 4))
-                plot_conf_matrix(confusion_matrix(y_val, val_pred), "Validation CM")
-
             results.append({
                 "Model": name,
+                "Train": train_acc,
                 "Validation": val_acc
             })
 
+        # --- FIND BEST MODEL ---
+        best_index = np.argmax([r["Validation"] for r in results])
+
+        for i, (name, model) in enumerate(models.items()):
+            st.subheader(name)
+
+            if i == best_index:
+                st.success("⭐ BEST MODEL (Highest Validation Accuracy)")
+
+            train_pred = model.predict(X_train)
+            val_pred = model.predict(X_val)
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write("Train Acc:", round(results[i]["Train"], 4))
+                plot_conf_matrix(confusion_matrix(y_train, train_pred), "Train CM")
+
+            with col2:
+                st.write("Val Acc:", round(results[i]["Validation"], 4))
+                plot_conf_matrix(confusion_matrix(y_val, val_pred), "Validation CM")
+
         st.session_state["models"] = models
         st.session_state["results"] = results
+        st.session_state["best_index"] = best_index
 
-# =======================
+# =========================
 # TAB 3: TESTING
-# =======================
+# =========================
 with tab3:
     if "models" not in st.session_state:
         st.warning("Train models first.")
     else:
-        test_files = st.file_uploader(
-            "Upload Dataset",
-            accept_multiple_files=True
-        )
+        test_files = st.file_uploader("Upload HW2 Dataset", accept_multiple_files=True)
 
         if test_files:
             X_test, y_test = build_dataset(test_files)
-
-            st.subheader("Test Data Visualization")
 
             fig, ax = plt.subplots()
             ax.scatter(X_test[:, 0], X_test[:, 1], c=y_test)
@@ -228,8 +240,50 @@ with tab3:
                 pred = model.predict(X_test)
                 acc = accuracy_score(y_test, pred)
 
+                if i == st.session_state["best_index"]:
+                    st.success("⭐ BEST MODEL")
+
                 st.write("Test Accuracy:", round(acc, 4))
                 plot_conf_matrix(confusion_matrix(y_test, pred), "Test CM")
 
                 drop = st.session_state["results"][i]["Validation"] - acc
                 st.write("Accuracy Drop:", round(drop, 4))
+
+            # =========================
+            # PER FILE ANALYSIS
+            # =========================
+            st.header("📁 Per-File Analysis (Best Model)")
+
+            best_model = list(st.session_state["models"].values())[st.session_state["best_index"]]
+
+            for file in test_files:
+                with st.expander(file.name):
+
+                    result = analyze_file(file, best_model)
+
+                    if result is None:
+                        st.warning("No hits detected.")
+                        continue
+
+                    signal, sr, hits, boundaries, preds, confidence = result
+
+                    is_bad = confidence > 0.5
+
+                    if is_bad:
+                        st.error(f"DEFECT DETECTED ({confidence*100:.1f}%)")
+                    else:
+                        st.success(f"HEALTHY ({(1-confidence)*100:.1f}%)")
+
+                    good_hits = np.sum(preds == 0)
+                    bad_hits = np.sum(preds == 1)
+
+                    st.write(f"GOOD: {good_hits} | BAD: {bad_hits}")
+
+                    for i, p in enumerate(preds):
+                        st.write(f"Hit {i+1}: {'BAD' if p==1 else 'GOOD'}")
+
+                    fig, ax = plt.subplots(figsize=(7, 2))
+                    ax.plot(signal, alpha=0.4)
+                    for s, e in boundaries:
+                        ax.axvspan(s, e, alpha=0.3)
+                    st.pyplot(fig)
