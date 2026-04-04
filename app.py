@@ -5,7 +5,7 @@ import librosa.display
 import joblib
 import matplotlib.pyplot as plt
 import tempfile
-import scipy.signal as signal_processing  # Fixed import for CWT
+import scipy.signal as signal_processing
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
@@ -18,7 +18,7 @@ def load_model():
 try:
     model = load_model()
 except Exception:
-    st.error("Error: Could not find 'model.pkl' in the repository.")
+    st.error("Error: Could not find 'model.pkl'. Ensure it is in your GitHub repo.")
     st.stop()
 
 # --- AUDIO LOADING ---
@@ -54,27 +54,15 @@ def split_hits(signal, sr):
 
 # --- FEATURE EXTRACTION ---
 def extract_features(signal, sr):
-    # Adjust n_fft for short signals to avoid warnings
-    n_fft_adj = min(len(signal), 2048)
-    mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13, n_fft=n_fft_adj), axis=1)
+    # Fix for short hits: calculate n_fft based on signal length
+    n_fft_val = min(len(signal), 2048)
+    mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13, n_fft=n_fft_val), axis=1)
     psd_mean = np.mean(np.abs(np.fft.fft(signal))**2)
     return np.hstack([mfcc, psd_mean])
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("🔍 Science Behind the Sound")
-    with st.expander("A. Time Domain"):
-        st.write("Healthy blocks ring longer; damaged ones decay faster.")
-    with st.expander("B. Frequency Domain"):
-        st.write("Damage reduces stiffness → shifts energy to lower frequencies.")
-    with st.expander("C. Time-Frequency"):
-        st.write("STFT and CWT track how sound energy moves across frequencies over time.")
-    st.divider()
-    st.caption("TIP | Smart Materials & Structures Lab | UH")
-
 # --- MAIN UI ---
 st.title("🔊 Composite Structural Health Monitor")
-uploaded_files = st.file_uploader("Upload Audio (.wav, .m4a)", type=["wav", "m4a"], accept_multiple_files=True)
+uploaded_files = st.file_uploader("Upload Audio", type=["wav", "m4a"], accept_multiple_files=True)
 
 if uploaded_files:
     for file in uploaded_files:
@@ -88,47 +76,77 @@ if uploaded_files:
 
             features = [extract_features(h, sr) for h in hits]
             preds = model.predict(features)
-            confidence = np.mean(model.predict_proba(features)[:, 1]) if hasattr(model, "predict_proba") else np.mean(preds)
+            
+            if hasattr(model, "predict_proba"):
+                probs = model.predict_proba(features)[:, 1]
+                confidence = np.mean(probs)
+            else:
+                confidence = np.mean(preds)
+
             is_bad = confidence > 0.5
 
-            col_res, col_plot = st.columns([1, 1.5])
-            with col_res:
+            # Display results
+            res_col, plot_col = st.columns([1, 1.5])
+            with res_col:
                 if is_bad: st.error("### ❌ DEFECT DETECTED")
                 else: st.success("### ✅ HEALTHY")
                 st.metric("Confidence", f"{confidence*100 if is_bad else (1-confidence)*100:.1f}%")
 
-            with col_plot:
-                fig_t, ax_t = plt.subplots(figsize=(7, 3))
+            with plot_col:
+                fig_t, ax_t = plt.subplots(figsize=(7, 2.5))
                 ax_t.plot(signal, color='gray', alpha=0.4)
                 for s, e in boundaries:
                     ax_t.axvspan(s, e, color='red' if is_bad else 'green', alpha=0.3)
                 st.pyplot(fig_t)
                 plt.close(fig_t)
 
+            # Detailed Analysis of first hit
             st.divider()
-            st.subheader("🔬 Multi-Domain Analysis (Hit #1)")
             sample_hit = hits[0]
             
             # Frequency Domain
-            f_col1, f_col2 = st.columns(2)
+            f1, f2 = st.columns(2)
             fft_vals = np.abs(np.fft.rfft(sample_hit))
             freqs = np.fft.rfftfreq(len(sample_hit), 1/sr)
-            with f_col1:
-                fig_fft, ax_fft = plt.subplots(figsize=(6, 3))
-                ax_fft.plot(freqs, fft_vals, color='teal')
-                ax_fft.set_xlim(0, 5000)
-                ax_fft.set_title("FFT Magnitude")
-                st.pyplot(fig_fft)
-            with f_col2:
+            with f1:
+                fig_f, ax_f = plt.subplots(figsize=(6, 3))
+                ax_f.plot(freqs, fft_vals, color='teal')
+                ax_f.set_xlim(0, 5000)
+                ax_f.set_title("FFT Magnitude")
+                st.pyplot(fig_f)
+            with f2:
                 psd = (fft_vals**2) / (len(sample_hit) * sr)
-                fig_psd, ax_psd = plt.subplots(figsize=(6, 3))
-                ax_psd.semilogy(freqs, psd, color='darkorange')
-                ax_psd.set_xlim(0, 5000)
-                ax_psd.set_title("PSD (Log Scale)")
-                st.pyplot(fig_psd)
+                fig_p, ax_p = plt.subplots(figsize=(6, 3))
+                ax_p.semilogy(freqs, psd, color='darkorange')
+                ax_p.set_xlim(0, 5000)
+                ax_p.set_title("PSD (Power Spectral Density)")
+                st.pyplot(fig_p)
 
             # Time-Frequency Domain
             t1, t2, t3 = st.columns(3)
+            # CRITICAL: Define n_fft for the plots
+            n_fft_plot = min(len(sample_hit), 2048)
+
             with t1:
                 st.caption("STFT Spectrogram")
-                n_fft
+                stft = np.abs(librosa.stft(sample_hit, n_fft=n_fft_plot))
+                fig_s, ax_s = plt.subplots(figsize=(5, 4))
+                librosa.display.specshow(librosa.amplitude_to_db(stft), y_axis='log', sr=sr, ax=ax_s)
+                st.pyplot(fig_s)
+            
+            with t2:
+                st.caption("CWT (Ricker Scalogram)")
+                widths = np.arange(1, 31)
+                cwtmatr = signal_processing.cwt(sample_hit, signal_processing.ricker, widths)
+                fig_c, ax_c = plt.subplots(figsize=(5, 4))
+                ax_c.imshow(np.abs(cwtmatr), extent=[0, len(sample_hit)/sr, 1, 31], cmap='magma', aspect='auto')
+                st.pyplot(fig_c)
+
+            with t3:
+                st.caption("MFCC Fingerprint")
+                mfcc_v = librosa.feature.mfcc(y=sample_hit, sr=sr, n_mfcc=13, n_fft=n_fft_plot)
+                fig_m, ax_m = plt.subplots(figsize=(5, 4))
+                librosa.display.specshow(mfcc_v, ax=ax_m)
+                st.pyplot(fig_m)
+            
+            plt.close('all')
