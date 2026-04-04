@@ -1,133 +1,120 @@
 import streamlit as st
 import numpy as np
 import librosa
+import librosa.display
 import joblib
-import os
+import matplotlib.pyplot as plt
 
-st.title("🔊 Delamination Detection App")
+# Page Config
+st.set_page_config(page_title="Delamination Detector", page_icon="🔊")
+
+st.title("🔊 Composite Delamination Detection")
+st.markdown("""
+This app uses **Machine Learning** to analyze the acoustic signature of percussion hits on composite blocks. 
+It identifies internal delamination (defects) that are often invisible to the naked eye.
+""")
 
 # =========================
 # Load model
 # =========================
-model = joblib.load("model.pkl")
+@st.cache_resource
+def load_model():
+    return joblib.load("model.pkl")
+
+model = load_model()
 
 # =========================
-# Audio loader (FIXED for m4a)
+# Processing Functions
 # =========================
 def load_audio(file):
     try:
         signal, sr = librosa.load(file, sr=22050)
     except:
-        st.warning("Standard load failed, retrying with audioread...")
         signal, sr = librosa.load(file, sr=22050, backend="audioread")
     return signal, sr
 
-# =========================
-# HIT SPLITTING (IMPORTANT)
-# =========================
 def split_hits(signal, sr):
-    signal = signal / np.max(np.abs(signal))
-
+    signal = signal / (np.max(np.abs(signal)) + 1e-9)
     frame_length = int(0.02 * sr)
     hop_length = int(0.01 * sr)
-
-    energy = librosa.feature.rms(
-        y=signal,
-        frame_length=frame_length,
-        hop_length=hop_length
-    )[0]
-
+    energy = librosa.feature.rms(y=signal, frame_length=frame_length, hop_length=hop_length)[0]
+    
     threshold = np.mean(energy) * 1.5
-    active = energy > threshold
-
-    indices = np.where(active)[0]
-
-    if len(indices) == 0:
-        return []
-
+    indices = np.where(energy > threshold)[0]
+    
+    if len(indices) == 0: return []
+    
     segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
-
     hits = []
+    hit_times = [] # To store for plotting
     for seg in segments:
         start = seg[0] * hop_length
         end = seg[-1] * hop_length
         hit = signal[start:end]
-
         if len(hit) > 200:
             hits.append(hit)
+            hit_times.append((start, end))
+    return hits, hit_times
 
-    return hits
-
-# =========================
-# FEATURE EXTRACTION
-# =========================
 def extract_features(signal, sr):
     mfcc = librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13)
     mfcc_mean = np.mean(mfcc, axis=1)
-
     fft = np.abs(np.fft.fft(signal))**2
-    psd = fft[:len(fft)//2]
-    psd_mean = np.mean(psd)
-
+    psd_mean = np.mean(fft[:len(fft)//2])
     return np.hstack([mfcc_mean, psd_mean])
 
 # =========================
-# FILE PROCESSING
+# UI Sidebar - Educational Info
 # =========================
-def process_file(file, folder_name="Unknown"):
-    signal, sr = load_audio(file)
-
-    hits = split_hits(signal, sr)
-
-    if len(hits) == 0:
-        return "No hits detected", []
-
-    predictions = []
-
-    for hit in hits:
-        features = extract_features(hit, sr)
-        pred = model.predict([features])[0]
-        predictions.append(pred)
-
-    # Majority vote
-    final = int(round(np.mean(predictions)))
-
-    return final, predictions
+with st.sidebar:
+    st.header("How it Works")
+    st.info("""
+    **1. Hit Detection:** The app finds 'spikes' in audio energy.
+    **2. Feature Extraction:** It calculates MFCCs (acoustic fingerprints) and PSD (energy distribution).
+    **3. Classification:** A pre-trained model compares these features to known 'Good' and 'Bad' samples.
+    """)
+    
 
 # =========================
-# UI: Upload multiple files
+# Main Upload Logic
 # =========================
 uploaded_files = st.file_uploader(
-    "Upload audio files or entire dataset",
-    type=["wav", "m4a"],
+    "Upload audio files (.wav or .m4a)", 
+    type=["wav", "m4a"], 
     accept_multiple_files=True
 )
 
 if uploaded_files:
-
-    st.subheader("📊 Results")
-
     for file in uploaded_files:
+        with st.expander(f"Analysis for: {file.name}", expanded=True):
+            signal, sr = load_audio(file)
+            hits, hit_times = split_hits(signal, sr)
+            
+            if not hits:
+                st.warning("No percussion hits detected in this file.")
+                continue
+            
+            # Prediction Logic
+            preds = [model.predict([extract_features(h, sr)])[0] for h in hits]
+            avg_score = np.mean(preds)
+            is_bad = avg_score > 0.5
+            confidence = avg_score if is_bad else (1 - avg_score)
+            
+            # Display Result
+            col1, col2 = st.columns(2)
+            with col1:
+                if is_bad:
+                    st.error(f"### Result: BAD (Defect)")
+                else:
+                    st.success(f"### Result: GOOD (Healthy)")
+                st.metric("Confidence", f"{confidence*100:.1f}%")
 
-        # Extract folder name if present
-        if "/" in file.name:
-            folder = file.name.split("/")[0]
-        else:
-            folder = "Single File"
-
-        result, preds = process_file(file, folder)
-
-        st.write(f"📁 **Folder:** {folder}")
-        st.write(f"📄 **File:** {file.name}")
-
-        if result == "No hits detected":
-            st.warning("No hits detected")
-            continue
-
-        if result == 0:
-            st.success("Prediction: GOOD")
-        else:
-            st.error("Prediction: BAD")
-
-        st.write(f"Hit Predictions: {preds}")
-        st.write("---")
+            with col2:
+                # Plot the hits found
+                fig, ax = plt.subplots(figsize=(6, 2))
+                ax.plot(signal, color='gray', alpha=0.5)
+                for start, end in hit_times:
+                    ax.axvspan(start, end, color='red' if is_bad else 'green', alpha=0.3)
+                ax.set_title("Detected Hits in Recording")
+                ax.set_axis_off()
+                st.pyplot(fig)
