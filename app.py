@@ -118,16 +118,38 @@ def analyze_file(file, model):
 with st.sidebar:
     st.header("🔍 Science Behind the Sound")
     
+   
+    
+    # --- SIGNAL PROCESSING SECTION ---
+    st.subheader("Signal Processing")
     with st.expander("What is the Time Domain?"):
         st.write("It shows the sound's 'Heartbeat.' Healthy blocks ring longer; damaged blocks fade out fast due to internal friction.")
+        
     
     with st.expander("What is the Frequency Graph?"):
         st.write("It shows the 'Pitch.' Delamination makes the block less stiff, which usually shifts the pitch to a lower frequency.")
         
+    with st.expander("What is PSD (Power Spectral Density)?"):
+        st.write("It measures the 'Strength' of the sound at every pitch. It helps us see exactly which frequencies are losing energy because of internal gaps.")
+        
+        
     with st.expander("What are MFCCs?"):
-        st.write("The 'Acoustic Fingerprint.' Our AI uses these to recognize the unique texture of a defect, much like voice recognition.")
+        st.write("The 'Acoustic Fingerprint.' Our AI uses these to recognize the unique texture of a defect, much like how voice recognition identifies a person.")
+        
 
-# =========================
+    # --- MACHINE LEARNING SECTION ---
+    st.subheader("The 'Brain' (AI Algorithms)")
+    with st.expander("KNN (K-Nearest Neighbors)"):
+        st.write("The 'Majority Rule' approach. It looks at the current hit and finds the most similar sounds in its memory. If most of those neighbors were 'Bad,' it classifies this one as 'Bad' too.")
+        
+    with st.expander("LR (Logistic Regression)"):
+        st.write("The 'Probability' approach. It calculates the odds of a block being damaged. It’s like a sliding scale from 0 to 1; if the score crosses 0.5, the app flags a defect.")
+        
+    with st.expander("DT (Decision Tree)"):
+        st.write("The 'Flowchart' approach. It asks a series of questions: 'Is the pitch low?' 'Is the sound short?' Depending on the answers, it follows a path to the final result.")
+        
+    with st.expander("SVM (Support Vector Machine)"):
+        st.write("The 'Boundary' approach. It draws a clear line (or 'wall') between the data of healthy blocks and damaged blocks to ensure the most accurate separation.")# =========================
 # TABS
 # =========================
 tab1, tab2, tab3 = st.tabs(["📂 Data", "🤖 Training", "🧪 Testing"])
