@@ -4,7 +4,6 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import tempfile
-import os
 
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, confusion_matrix
@@ -14,27 +13,24 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="HW3 Delamination ML System", layout="wide")
+st.set_page_config(page_title="Delamination ML Lab", layout="wide", page_icon="🔊")
 
-st.title("🔊 HW3: Automated Delamination ML Pipeline")
+st.title("🔊 Delamination Detection & Machine Learning Lab")
+st.write("This app performs delamination analysis: signal processing, feature extraction, model training, and robustness testing.")
 
 # --- AUDIO LOADING ---
 def load_audio(file):
     suffix = "." + file.name.split(".")[-1]
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(file.read())
         tmp_path = tmp.name
-
     signal, sr = librosa.load(tmp_path, sr=22050)
     return signal, sr
 
 # --- HIT DETECTION ---
 def split_hits(signal, sr):
     signal = signal / (np.max(np.abs(signal)) + 1e-9)
-
-    frame_length = int(0.02 * sr)
-    hop_length = int(0.01 * sr)
+    frame_length, hop_length = int(0.02 * sr), int(0.01 * sr)
 
     energy = librosa.feature.rms(y=signal,
                                  frame_length=frame_length,
@@ -43,20 +39,19 @@ def split_hits(signal, sr):
     indices = np.where(energy > np.mean(energy) * 1.5)[0]
 
     if len(indices) == 0:
-        return []
+        return [], []
 
     segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
 
-    hits = []
+    hits, boundaries = [], []
     for seg in segments:
-        start = seg[0] * hop_length
-        end = seg[-1] * hop_length
+        start, end = seg[0] * hop_length, seg[-1] * hop_length
         hit = signal[start:end]
-
         if len(hit) > 200:
             hits.append(hit)
+            boundaries.append((start, end))
 
-    return hits
+    return hits, boundaries
 
 # --- FEATURE EXTRACTION ---
 def extract_features(signal, sr):
@@ -70,124 +65,142 @@ def build_dataset(files):
 
     for file in files:
         signal, sr = load_audio(file)
-        hits = split_hits(signal, sr)
+        hits, _ = split_hits(signal, sr)
 
         label = 1 if "_b" in file.name.lower() else 0
 
         for h in hits:
-            features = extract_features(h, sr)
-            X.append(features)
+            X.append(extract_features(h, sr))
             y.append(label)
 
     return np.array(X), np.array(y)
 
-# --- MODEL TRAINING ---
-def train_models(X_train, y_train):
+# --- SIDEBAR (EDUCATIONAL) ---
+with st.sidebar:
+    st.header("🔍 Learn What’s Happening")
+
+    with st.expander("Time Domain (Waveform)"):
+        st.write("Shows how sound amplitude changes over time. Damaged structures lose energy faster.")
+
+    with st.expander("Frequency Domain"):
+        st.write("Shows energy distribution. Damage shifts energy to lower frequencies.")
+
+    with st.expander("MFCC Features"):
+        st.write("Compact representation of sound used by ML models.")
+
+    with st.expander("Machine Learning Models"):
+        st.write("""
+        - KNN: Uses nearest neighbors
+        - Decision Tree: Rule-based splits
+        - Logistic Regression: Linear classifier
+        - SVM: Finds optimal boundary
+        """)
+
+# --- FILE UPLOAD ---
+st.header("📂 Upload Dataset (Training + Validation)")
+train_files = st.file_uploader("Upload labeled files (_g / _b)", accept_multiple_files=True)
+
+st.header("📂 Upload Dataset (Unseen Test)")
+test_files = st.file_uploader("Upload test dataset", accept_multiple_files=True)
+
+# --- PROCESS ---
+if train_files:
+
+    st.subheader("🔄 Step 1: Building Dataset")
+    X, y = build_dataset(train_files)
+
+    st.write(f"Total samples extracted: {len(X)}")
+
+    st.info("Each impact is converted into features (MFCC + PSD) and labeled as GOOD (0) or BAD (1).")
+
+    # --- VISUALIZE DATASET ---
+    st.subheader("📊 Dataset Visualization")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("Label Distribution")
+        unique, counts = np.unique(y, return_counts=True)
+        st.bar_chart(dict(zip(unique, counts)))
+
+    with col2:
+        st.write("Feature Spread (First 2 MFCCs)")
+        if X.shape[1] >= 2:
+            fig, ax = plt.subplots()
+            ax.scatter(X[:, 0], X[:, 1], c=y)
+            ax.set_xlabel("MFCC 1")
+            ax.set_ylabel("MFCC 2")
+            st.pyplot(fig)
+
+    # --- SPLIT ---
+    st.subheader("✂️ Step 2: Train/Validation Split")
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
+
+    st.info("Dataset is split into 70% training and 30% validation.")
+
+    # --- TRAIN MODELS ---
+    st.subheader("🤖 Step 3: Training Models")
+
     models = {
-        "KNN": KNeighborsClassifier(n_neighbors=5),
+        "KNN": KNeighborsClassifier(),
         "Decision Tree": DecisionTreeClassifier(),
         "Logistic Regression": LogisticRegression(max_iter=1000),
-        "SVM": SVC(probability=True)
+        "SVM": SVC()
     }
+
+    results = []
 
     for name, model in models.items():
         model.fit(X_train, y_train)
 
-    return models
+        train_pred = model.predict(X_train)
+        val_pred = model.predict(X_val)
 
-# --- EVALUATION ---
-def evaluate_model(model, X, y):
-    preds = model.predict(X)
-    acc = accuracy_score(y, preds)
-    cm = confusion_matrix(y, preds)
-    return acc, cm
-
-# --- UI ---
-st.header("📂 Upload HW3 Dataset (Training + Validation)")
-train_files = st.file_uploader(
-    "Upload HW3 audio files (multiple allowed)",
-    type=["wav", "m4a"],
-    accept_multiple_files=True
-)
-
-st.header("📂 Upload HW2 Dataset (Unseen Test Data)")
-test_files = st.file_uploader(
-    "Upload HW2 audio files",
-    type=["wav", "m4a"],
-    accept_multiple_files=True
-)
-
-if train_files:
-
-    st.subheader("🔄 Building Dataset...")
-    X, y = build_dataset(train_files)
-
-    st.write(f"Total samples: {len(X)}")
-
-    # --- SPLIT ---
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.3, shuffle=True, random_state=42
-    )
-
-    st.subheader("🤖 Training Models...")
-    models = train_models(X_train, y_train)
-
-    results = []
-
-    st.subheader("📊 Results (Training & Validation)")
-
-    for name, model in models.items():
-
-        train_acc, train_cm = evaluate_model(model, X_train, y_train)
-        val_acc, val_cm = evaluate_model(model, X_val, y_val)
+        train_acc = accuracy_score(y_train, train_pred)
+        val_acc = accuracy_score(y_val, val_pred)
 
         st.markdown(f"### {name}")
 
-        col1, col2 = st.columns(2)
+        colA, colB = st.columns(2)
 
-        with col1:
+        with colA:
             st.write("Training Accuracy:", round(train_acc, 4))
-            st.write("Confusion Matrix:")
-            st.write(train_cm)
+            st.write(confusion_matrix(y_train, train_pred))
 
-        with col2:
+        with colB:
             st.write("Validation Accuracy:", round(val_acc, 4))
-            st.write("Confusion Matrix:")
-            st.write(val_cm)
+            st.write(confusion_matrix(y_val, val_pred))
 
         results.append({
             "Model": name,
-            "Train Acc": train_acc,
-            "Val Acc": val_acc
+            "Train": train_acc,
+            "Validation": val_acc
         })
 
-    # --- PART 3: TEST DATA ---
+    # --- TEST (HW2) ---
     if test_files:
 
-        st.subheader("🧪 Testing on HW2 (Unseen Data)")
+        st.subheader("🧪 Step 4: Testing on Unseen Data (HW2)")
 
         X_test, y_test = build_dataset(test_files)
 
         for i, (name, model) in enumerate(models.items()):
 
-            test_acc, test_cm = evaluate_model(model, X_test, y_test)
+            test_pred = model.predict(X_test)
+            test_acc = accuracy_score(y_test, test_pred)
 
-            st.markdown(f"### {name} (Test Results)")
+            st.markdown(f"### {name}")
 
             st.write("Test Accuracy:", round(test_acc, 4))
-            st.write("Confusion Matrix:")
-            st.write(test_cm)
+            st.write(confusion_matrix(y_test, test_pred))
 
-            # --- ROBUSTNESS ---
-            val_acc = results[i]["Val Acc"]
-            drop = val_acc - test_acc
+            drop = results[i]["Validation"] - test_acc
+            st.write(f"Accuracy Drop (Robustness): {round(drop,4)}")
 
-            st.write(f"Accuracy Drop (Val → Test): {round(drop,4)}")
-
-            results[i]["Test Acc"] = test_acc
+            results[i]["Test"] = test_acc
             results[i]["Drop"] = drop
 
     # --- FINAL TABLE ---
-    st.subheader("📋 Model Comparison Table")
+    st.subheader("📋 Final Comparison")
 
     st.dataframe(results)
