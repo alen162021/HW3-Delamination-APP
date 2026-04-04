@@ -16,7 +16,12 @@ from sklearn.svm import SVC
 st.set_page_config(page_title="Delamination ML Lab", layout="wide", page_icon="🔊")
 
 st.title("🔊 Delamination Detection & Machine Learning Lab")
-st.write("This app performs delamination analysis: signal processing, feature extraction, model training, and robustness testing.")
+
+st.caption("""
+This project was partially sponsored by a Teaching Innovation Program (TIP) grant, 
+Smart Materials and Structures Laboratory (SMSL), and Artificial Intelligent Laboratory 
+for Monitoring and Inspection, University of Houston.
+""")
 
 # --- AUDIO LOADING ---
 def load_audio(file):
@@ -75,132 +80,156 @@ def build_dataset(files):
 
     return np.array(X), np.array(y)
 
-# --- SIDEBAR (EDUCATIONAL) ---
+# --- HEATMAP FUNCTION ---
+def plot_conf_matrix(cm, title):
+    fig, ax = plt.subplots()
+    im = ax.imshow(cm)
+
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, cm[i, j], ha="center", va="center")
+
+    ax.set_title(title)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+
+    st.pyplot(fig)
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("🔍 Learn What’s Happening")
+    st.header("🔍 Learn the Concepts")
 
-    with st.expander("Time Domain (Waveform)"):
-        st.write("Shows how sound amplitude changes over time. Damaged structures lose energy faster.")
+    st.markdown("""
+    **Time Domain:** Shows how sound decays over time  
+    **Frequency Domain:** Shows energy distribution  
+    **MFCC:** Acoustic fingerprint used for ML  
+    """)
 
-    with st.expander("Frequency Domain"):
-        st.write("Shows energy distribution. Damage shifts energy to lower frequencies.")
+    st.markdown("""
+    **Models Used:**
+    - KNN
+    - Decision Tree
+    - Logistic Regression
+    - SVM
+    """)
 
-    with st.expander("MFCC Features"):
-        st.write("Compact representation of sound used by ML models.")
+# --- TABS ---
+tab1, tab2, tab3 = st.tabs(["📂 Data", "🤖 Training", "🧪 Testing"])
 
-    with st.expander("Machine Learning Models"):
-        st.write("""
-        - KNN: Uses nearest neighbors
-        - Decision Tree: Rule-based splits
-        - Logistic Regression: Linear classifier
-        - SVM: Finds optimal boundary
-        """)
+# =======================
+# TAB 1: DATA
+# =======================
+with tab1:
+    st.header("Upload Dataset")
 
-# --- FILE UPLOAD ---
-st.header("📂 Upload Dataset (Training + Validation)")
-train_files = st.file_uploader("Upload labeled files (_g / _b)", accept_multiple_files=True)
+    train_files = st.file_uploader(
+        "Upload HW3 Dataset (_g / _b)",
+        accept_multiple_files=True
+    )
 
-st.header("📂 Upload Dataset (Unseen Test)")
-test_files = st.file_uploader("Upload test dataset", accept_multiple_files=True)
+    if train_files:
+        X, y = build_dataset(train_files)
 
-# --- PROCESS ---
-if train_files:
+        st.success(f"Extracted {len(X)} samples")
 
-    st.subheader("🔄 Step 1: Building Dataset")
-    X, y = build_dataset(train_files)
+        col1, col2 = st.columns(2)
 
-    st.write(f"Total samples extracted: {len(X)}")
+        with col1:
+            st.subheader("Label Distribution")
+            unique, counts = np.unique(y, return_counts=True)
+            st.bar_chart(dict(zip(unique, counts)))
 
-    st.info("Each impact is converted into features (MFCC + PSD) and labeled as GOOD (0) or BAD (1).")
+        with col2:
+            st.subheader("Feature Scatter (MFCC1 vs MFCC2)")
+            if X.shape[1] >= 2:
+                fig, ax = plt.subplots()
+                ax.scatter(X[:, 0], X[:, 1], c=y)
+                st.pyplot(fig)
 
-    # --- VISUALIZE DATASET ---
-    st.subheader("📊 Dataset Visualization")
+        st.session_state["X"] = X
+        st.session_state["y"] = y
 
-    col1, col2 = st.columns(2)
+# =======================
+# TAB 2: TRAINING
+# =======================
+with tab2:
+    if "X" not in st.session_state:
+        st.warning("Upload dataset first.")
+    else:
+        X = st.session_state["X"]
+        y = st.session_state["y"]
 
-    with col1:
-        st.write("Label Distribution")
-        unique, counts = np.unique(y, return_counts=True)
-        st.bar_chart(dict(zip(unique, counts)))
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.3, random_state=42
+        )
 
-    with col2:
-        st.write("Feature Spread (First 2 MFCCs)")
-        if X.shape[1] >= 2:
+        models = {
+            "KNN": KNeighborsClassifier(),
+            "Decision Tree": DecisionTreeClassifier(),
+            "Logistic Regression": LogisticRegression(max_iter=1000),
+            "SVM": SVC()
+        }
+
+        results = []
+
+        for name, model in models.items():
+            st.subheader(name)
+
+            model.fit(X_train, y_train)
+
+            train_pred = model.predict(X_train)
+            val_pred = model.predict(X_val)
+
+            train_acc = accuracy_score(y_train, train_pred)
+            val_acc = accuracy_score(y_val, val_pred)
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.write("Training Accuracy:", round(train_acc, 4))
+                plot_conf_matrix(confusion_matrix(y_train, train_pred), "Train CM")
+
+            with col2:
+                st.write("Validation Accuracy:", round(val_acc, 4))
+                plot_conf_matrix(confusion_matrix(y_val, val_pred), "Validation CM")
+
+            results.append({
+                "Model": name,
+                "Validation": val_acc
+            })
+
+        st.session_state["models"] = models
+        st.session_state["results"] = results
+
+# =======================
+# TAB 3: TESTING
+# =======================
+with tab3:
+    if "models" not in st.session_state:
+        st.warning("Train models first.")
+    else:
+        test_files = st.file_uploader(
+            "Upload Dataset",
+            accept_multiple_files=True
+        )
+
+        if test_files:
+            X_test, y_test = build_dataset(test_files)
+
+            st.subheader("Test Data Visualization")
+
             fig, ax = plt.subplots()
-            ax.scatter(X[:, 0], X[:, 1], c=y)
-            ax.set_xlabel("MFCC 1")
-            ax.set_ylabel("MFCC 2")
+            ax.scatter(X_test[:, 0], X_test[:, 1], c=y_test)
             st.pyplot(fig)
 
-    # --- SPLIT ---
-    st.subheader("✂️ Step 2: Train/Validation Split")
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.3, random_state=42)
+            for i, (name, model) in enumerate(st.session_state["models"].items()):
+                st.subheader(name)
 
-    st.info("Dataset is split into 70% training and 30% validation.")
+                pred = model.predict(X_test)
+                acc = accuracy_score(y_test, pred)
 
-    # --- TRAIN MODELS ---
-    st.subheader("🤖 Step 3: Training Models")
+                st.write("Test Accuracy:", round(acc, 4))
+                plot_conf_matrix(confusion_matrix(y_test, pred), "Test CM")
 
-    models = {
-        "KNN": KNeighborsClassifier(),
-        "Decision Tree": DecisionTreeClassifier(),
-        "Logistic Regression": LogisticRegression(max_iter=1000),
-        "SVM": SVC()
-    }
-
-    results = []
-
-    for name, model in models.items():
-        model.fit(X_train, y_train)
-
-        train_pred = model.predict(X_train)
-        val_pred = model.predict(X_val)
-
-        train_acc = accuracy_score(y_train, train_pred)
-        val_acc = accuracy_score(y_val, val_pred)
-
-        st.markdown(f"### {name}")
-
-        colA, colB = st.columns(2)
-
-        with colA:
-            st.write("Training Accuracy:", round(train_acc, 4))
-            st.write(confusion_matrix(y_train, train_pred))
-
-        with colB:
-            st.write("Validation Accuracy:", round(val_acc, 4))
-            st.write(confusion_matrix(y_val, val_pred))
-
-        results.append({
-            "Model": name,
-            "Train": train_acc,
-            "Validation": val_acc
-        })
-
-    # --- TEST (HW2) ---
-    if test_files:
-
-        st.subheader("🧪 Step 4: Testing on Unseen Data (HW2)")
-
-        X_test, y_test = build_dataset(test_files)
-
-        for i, (name, model) in enumerate(models.items()):
-
-            test_pred = model.predict(X_test)
-            test_acc = accuracy_score(y_test, test_pred)
-
-            st.markdown(f"### {name}")
-
-            st.write("Test Accuracy:", round(test_acc, 4))
-            st.write(confusion_matrix(y_test, test_pred))
-
-            drop = results[i]["Validation"] - test_acc
-            st.write(f"Accuracy Drop (Robustness): {round(drop,4)}")
-
-            results[i]["Test"] = test_acc
-            results[i]["Drop"] = drop
-
-    # --- FINAL TABLE ---
-    st.subheader("📋 Final Comparison")
-
-    st.dataframe(results)
+                drop = st.session_state["results"][i]["Validation"] - acc
+                st.write("Accuracy Drop:", round(drop, 4))
