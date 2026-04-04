@@ -116,10 +116,16 @@ def analyze_file(file, model):
 # SIDEBAR
 # =========================
 with st.sidebar:
-    st.header("🔍 Learn")
-    st.write("MFCC = acoustic fingerprint")
-    st.write("PSD = energy distribution")
-    st.write("Models: KNN, DT, LR, SVM")
+    st.header("🔍 Science Behind the Sound")
+    
+    with st.expander("What is the Time Domain?"):
+        st.write("It shows the sound's 'Heartbeat.' Healthy blocks ring longer; damaged blocks fade out fast due to internal friction.")
+    
+    with st.expander("What is the Frequency Graph?"):
+        st.write("It shows the 'Pitch.' Delamination makes the block less stiff, which usually shifts the pitch to a lower frequency.")
+        
+    with st.expander("What are MFCCs?"):
+        st.write("The 'Acoustic Fingerprint.' Our AI uses these to recognize the unique texture of a defect, much like voice recognition.")
 
 # =========================
 # TABS
