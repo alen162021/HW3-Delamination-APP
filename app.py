@@ -5,7 +5,7 @@ import librosa.display
 import joblib
 import matplotlib.pyplot as plt
 import tempfile
-import scipy.signal as scipy_signal  # Changed this line
+import scipy.signal as signal_processing  # Fixed import for CWT
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
@@ -18,7 +18,7 @@ def load_model():
 try:
     model = load_model()
 except Exception:
-    st.error("Error: Could not find 'model.pkl'. Please ensure it is in the repository.")
+    st.error("Error: Could not find 'model.pkl' in the repository.")
     st.stop()
 
 # --- AUDIO LOADING ---
@@ -27,46 +27,36 @@ def load_audio(file):
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(file.read())
         tmp_path = tmp.name
-    # sr=22050 is standard for acoustic analysis
     signal, sr = librosa.load(tmp_path, sr=22050)
     return signal, sr
 
 # --- HIT DETECTION ---
 def split_hits(signal, sr):
-    # Normalize amplitude
     signal = signal / (np.max(np.abs(signal)) + 1e-9)
-    
     frame_length = int(0.02 * sr)
     hop_length = int(0.01 * sr)
-    
-    # RMS Energy calculation
     energy = librosa.feature.rms(y=signal, frame_length=frame_length, hop_length=hop_length)[0]
-    threshold = np.mean(energy) * 1.5
-    indices = np.where(energy > threshold)[0]
+    indices = np.where(energy > np.mean(energy) * 1.5)[0]
     
     if len(indices) == 0:
         return [], []
 
-    # Group consecutive energy frames into "hits"
     segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
     hits, boundaries = [], []
-    
     for seg in segments:
         start = seg[0] * hop_length
         end = seg[-1] * hop_length
         hit = signal[start:end]
-        if len(hit) > 200: # Ignore micro-clicks/noise
+        if len(hit) > 200:
             hits.append(hit)
             boundaries.append((start, end))
     return hits, boundaries
 
 # --- FEATURE EXTRACTION ---
 def extract_features(signal, sr):
-    # Fix: Ensure n_fft is not larger than the hit length
+    # Adjust n_fft for short signals to avoid warnings
     n_fft_adj = min(len(signal), 2048)
-    hop_adj = n_fft_adj // 4
-    
-    mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13, n_fft=n_fft_adj, hop_length=hop_adj), axis=1)
+    mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13, n_fft=n_fft_adj), axis=1)
     psd_mean = np.mean(np.abs(np.fft.fft(signal))**2)
     return np.hstack([mfcc, psd_mean])
 
@@ -74,18 +64,16 @@ def extract_features(signal, sr):
 with st.sidebar:
     st.header("🔍 Science Behind the Sound")
     with st.expander("A. Time Domain"):
-        st.write("Healthy composites 'ring' longer. Delamination causes rapid energy decay.")
+        st.write("Healthy blocks ring longer; damaged ones decay faster.")
     with st.expander("B. Frequency Domain"):
-        st.write("Defects reduce material stiffness, shifting peak energy to lower frequencies.")
+        st.write("Damage reduces stiffness → shifts energy to lower frequencies.")
     with st.expander("C. Time-Frequency"):
-        st.write("STFT and CWT track how sound energy moves across frequencies over milliseconds.")
+        st.write("STFT and CWT track how sound energy moves across frequencies over time.")
     st.divider()
-    st.caption("TIP | Smart Materials & Structures Lab | University of Houston")
+    st.caption("TIP | Smart Materials & Structures Lab | UH")
 
 # --- MAIN UI ---
 st.title("🔊 Composite Structural Health Monitor")
-st.write("Upload percussion recordings to detect internal defects.")
-
 uploaded_files = st.file_uploader("Upload Audio (.wav, .m4a)", type=["wav", "m4a"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -95,99 +83,52 @@ if uploaded_files:
             hits, boundaries = split_hits(signal, sr)
 
             if not hits:
-                st.warning("No percussion hits detected.")
+                st.warning("No hits detected.")
                 continue
 
-            # Process all hits for the final decision
             features = [extract_features(h, sr) for h in hits]
             preds = model.predict(features)
-            
-            # Confidence logic
-            if hasattr(model, "predict_proba"):
-                probs = model.predict_proba(features)[:, 1]
-                confidence = np.mean(probs)
-            else:
-                confidence = np.mean(preds)
-
+            confidence = np.mean(model.predict_proba(features)[:, 1]) if hasattr(model, "predict_proba") else np.mean(preds)
             is_bad = confidence > 0.5
 
-            # --- DISPLAY RESULTS ---
             col_res, col_plot = st.columns([1, 1.5])
             with col_res:
-                if is_bad:
-                    st.error("### ❌ DEFECT DETECTED")
-                    st.metric("Damage Confidence", f"{confidence*100:.1f}%")
-                else:
-                    st.success("### ✅ HEALTHY")
-                    st.metric("Health Confidence", f"{(1-confidence)*100:.1f}%")
-                st.info(f"Analyzed {len(hits)} hits")
+                if is_bad: st.error("### ❌ DEFECT DETECTED")
+                else: st.success("### ✅ HEALTHY")
+                st.metric("Confidence", f"{confidence*100 if is_bad else (1-confidence)*100:.1f}%")
 
             with col_plot:
-                fig_time, ax_time = plt.subplots(figsize=(7, 3))
-                ax_time.plot(signal, color='gray', alpha=0.4)
-                for start, end in boundaries:
-                    ax_time.axvspan(start, end, color='red' if is_bad else 'green', alpha=0.3)
-                ax_time.set_title("Time Domain: Detected Hits")
-                st.pyplot(fig_time)
-                plt.close(fig_time)
+                fig_t, ax_t = plt.subplots(figsize=(7, 3))
+                ax_t.plot(signal, color='gray', alpha=0.4)
+                for s, e in boundaries:
+                    ax_t.axvspan(s, e, color='red' if is_bad else 'green', alpha=0.3)
+                st.pyplot(fig_t)
+                plt.close(fig_t)
 
-            # --- MULTI-DOMAIN VISUALIZATION (Hit #1) ---
             st.divider()
-            st.subheader("🔬 Representative Hit Analysis")
+            st.subheader("🔬 Multi-Domain Analysis (Hit #1)")
             sample_hit = hits[0]
             
-            # B. FREQUENCY DOMAIN
-            st.write("#### B. Frequency Domain (FFT & PSD)")
-            cf1, cf2 = st.columns(2)
+            # Frequency Domain
+            f_col1, f_col2 = st.columns(2)
             fft_vals = np.abs(np.fft.rfft(sample_hit))
             freqs = np.fft.rfftfreq(len(sample_hit), 1/sr)
-            
-            with cf1:
+            with f_col1:
                 fig_fft, ax_fft = plt.subplots(figsize=(6, 3))
                 ax_fft.plot(freqs, fft_vals, color='teal')
                 ax_fft.set_xlim(0, 5000)
                 ax_fft.set_title("FFT Magnitude")
                 st.pyplot(fig_fft)
-                plt.close(fig_fft)
-
-            with cf2:
+            with f_col2:
                 psd = (fft_vals**2) / (len(sample_hit) * sr)
                 fig_psd, ax_psd = plt.subplots(figsize=(6, 3))
                 ax_psd.semilogy(freqs, psd, color='darkorange')
                 ax_psd.set_xlim(0, 5000)
                 ax_psd.set_title("PSD (Log Scale)")
                 st.pyplot(fig_psd)
-                plt.close(fig_psd)
 
-            # C. TIME-FREQUENCY DOMAIN
-            st.write("#### C. Time-Frequency Domain")
+            # Time-Frequency Domain
             t1, t2, t3 = st.columns(3)
-
             with t1:
                 st.caption("STFT Spectrogram")
-                n_fft_plot = min(len(sample_hit), 2048)
-                stft = np.abs(librosa.stft(sample_hit, n_fft=n_fft_plot))
-                fig_stft, ax_stft = plt.subplots(figsize=(5, 4))
-                librosa.display.specshow(librosa.amplitude_to_db(stft, ref=np.max),
-                                        y_axis='log', x_axis='time', sr=sr, ax=ax_stft)
-                st.pyplot(fig_stft)
-                plt.close(fig_stft)
-
-            with t2:
-                st.caption("CWT (Ricker Scalogram)")
-                widths = np.arange(1, 31)
-                # Scipy CWT for transient detection
-                cwtmatr = scipy_signal.cwt(sample_hit, scipy_signal.ricker, widths)
-                fig_cwt, ax_cwt = plt.subplots(figsize=(5, 4))
-                ax_cwt.imshow(np.abs(cwtmatr), extent=[0, len(sample_hit)/sr, 1, 31], cmap='magma', aspect='auto')
-                st.pyplot(fig_cwt)
-                plt.close(fig_cwt)
-
-            with t3:
-                st.caption("MFCC (AI Features)")
-                n_fft_mfcc = min(len(sample_hit), 2048)
-                mfcc_vis = librosa.feature.mfcc(y=sample_hit, sr=sr, n_mfcc=13, n_fft=n_fft_mfcc)
-                fig_m, ax_m = plt.subplots(figsize=(5, 4))
-                librosa.display.specshow(mfcc_vis, x_axis='time', ax=ax_m)
-                st.pyplot(fig_m)
-                plt.close(fig_m)
+                n_fft
