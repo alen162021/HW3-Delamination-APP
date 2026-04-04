@@ -4,3 +4,4 @@ numpy>=1.24.0
 matplotlib>=3.8.0
 joblib>=1.3.2
 scipy>=1.11.4
+signal
