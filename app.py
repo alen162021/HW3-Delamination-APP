@@ -6,8 +6,18 @@ import joblib
 import matplotlib.pyplot as plt
 import tempfile
 
+try:
+    import scipy.signal as sig
+except ImportError:
+    # Fallback attempt
+    from scipy import signal as sig
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
+# ... rest of your code ...
+
+# --- PAGE CONFIG ---
+
 
 # --- LOAD MODEL ---
 @st.cache_resource
