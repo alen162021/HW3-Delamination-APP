@@ -5,8 +5,6 @@ import librosa.display
 import joblib
 import matplotlib.pyplot as plt
 import tempfile
-import scipy.signal as signal_processing
-from scipy.signal import cwt, ricker  # Direct import to prevent AttributeError
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
@@ -134,18 +132,16 @@ if uploaded_files:
             
             with t2:
                 st.caption("CWT (Ricker Scalogram)")
-                widths = np.arange(1, 31)
-                # FIX: Using direct imports to ensure function availability
                 try:
+                    # Lazy import to ensure the rest of the app loads if SciPy is slow
+                    from scipy.signal import cwt, ricker
+                    widths = np.arange(1, 31)
                     cwtmatr = cwt(sample_hit, ricker, widths)
-                except Exception:
-                    # Fallback for older scipy versions
-                    from scipy.signal import cwt as sc_cwt, ricker as sc_ricker
-                    cwtmatr = sc_cwt(sample_hit, sc_ricker, widths)
-                
-                fig_c, ax_c = plt.subplots(figsize=(5, 4))
-                ax_c.imshow(np.abs(cwtmatr), extent=[0, len(sample_hit)/sr, 1, 31], cmap='magma', aspect='auto')
-                st.pyplot(fig_c)
+                    fig_c, ax_c = plt.subplots(figsize=(5, 4))
+                    ax_c.imshow(np.abs(cwtmatr), extent=[0, len(sample_hit)/sr, 1, 31], cmap='magma', aspect='auto')
+                    st.pyplot(fig_c)
+                except ImportError:
+                    st.error("CWT Error: SciPy 'signal' module not found. Check requirements.txt.")
 
             with t3:
                 st.caption("MFCC Fingerprint")
