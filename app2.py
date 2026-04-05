@@ -1,95 +1,64 @@
-import streamlit as st
-import numpy as np
-import librosa
-import librosa.display
-import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
-import pandas as pd
-import tempfile
-import os
+from sklearn.metrics import accuracy_score, confusion_matrix
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Acoustic Structural Health Monitor", layout="wide", page_icon="🛡️")
+# --- FEATURE EXTRACTION (PSD + MFCC) ---
+def get_feature_vector(hits, sr):
+    feature_matrix = []
+    for h in hits:
+        # MFCC (13 coefficients)
+        mfccs = np.mean(librosa.feature.mfcc(y=h, sr=sr, n_mfcc=13), axis=1)
+        # PSD (Mean Power)
+        psd = np.mean(np.abs(np.fft.fft(h))**2)
+        # Combine into a single vector (14 features total)
+        feature_matrix.append(np.hstack([mfccs, psd]))
+    return np.array(feature_matrix)
 
-# --- CORE UTILITIES ---
-
-def extract_features(signal, sr):
-    """
-    Extracts 13 MFCCs and the Mean Power Spectral Density (PSD).
-    Returns a combined feature vector of length 14.
-    """
-    # MFCC extraction
-    mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13), axis=1)
+# --- TRAINING FUNCTION ---
+def run_benchmarks(X, y, X_test=None, y_test=None):
+    # Task 2.3: 70/30 Split
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.3, shuffle=True, random_state=42)
     
-    # PSD calculation
-    psd = np.abs(np.fft.fft(signal))**2
-    psd_mean = np.mean(psd)
+    models = {
+        "KNN": KNeighborsClassifier(n_neighbors=5),
+        "Decision Tree": DecisionTreeClassifier(random_state=42),
+        "Logistic Regression": LogisticRegression(max_iter=1000),
+        "SVM": SVC(kernel='rbf', probability=True)
+    }
     
-    return np.hstack([mfcc, psd_mean])
+    report = []
+    figures = {}
 
-def process_audio_files(uploaded_files, label):
-    """
-    Saves uploaded bytes to a temp file, loads via librosa, 
-    detects individual hits, and extracts features.
-    """
-    features_list = []
-    
-    for file in uploaded_files:
-        # Create a temporary file to handle .m4a/.wav compatibility
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as tmp_file:
-            tmp_file.write(file.getvalue())
-            tmp_path = tmp_file.name
-
-        try:
-            # Load audio from the path (required for stable decoding of compressed formats)
-            signal, sr = librosa.load(tmp_path, sr=None)
-            
-            # 1. Noise Removal: Trim silence/low-energy parts
-            yt, _ = librosa.effects.trim(signal, top_db=20)
-            
-            # 2. Multi-Hit Splitting: Detect onsets of percussion hits
-            onsets = librosa.onset.onset_detect(y=yt, sr=sr, units='samples', backtrack=True)
-            
-            for i in range(len(onsets)):
-                start = onsets[i]
-                end = onsets[i+1] if i+1 < len(onsets) else len(yt)
-                hit = yt[start:end]
-                
-                # Feature extraction (ensure hit is long enough for FFT)
-                if len(hit) > 2048:
-                    features_list.append(extract_features(hit, sr))
+    for name, clf in models.items():
+        clf.fit(X_train, y_train)
         
-        except Exception as e:
-            st.error(f"Error processing {file.name}: {e}")
+        # Accuracies
+        acc_train = accuracy_score(y_train, clf.predict(X_train))
+        acc_val = accuracy_score(y_val, clf.predict(X_val))
         
-        finally:
-            # Clean up the temporary file from the server
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-                
-    if not features_list:
-        return np.empty((0, 14)), np.empty((0,))
+        # Part 3: Robustness (HW2 Test Set)
+        acc_test = accuracy_score(y_test, clf.predict(X_test)) if X_test is not None else 0
         
-    return np.array(features_list), np.full(len(features_list), label)
+        report.append({
+            "Model": name,
+            "Train Acc": acc_train,
+            "Val Acc": acc_val,
+            "Test (HW2) Acc": acc_test,
+            "Accuracy Drop": acc_val - acc_test
+        })
 
-# --- UI LAYOUT ---
-
-st.title("🛡️ Composite Structural Health Monitor")
-st.markdown("""
-Evaluate the structural integrity of composite materials using acoustic percussion analysis. 
-This system compares multiple machine learning architectures to identify the most robust detection model.
-""")
-
-# Setup Tabs for Data Input
-tab_train, tab_test = st.tabs(["📁 Training & Validation Data", "📁 Independent Robustness Test"])
-
-with tab_train:
-    st.subheader("Reference Data")
-    col1, col2 = st.columns(2)
-    with col1:
-        h_files = st.file_uploader("Upload Healthy Samples (A)", accept_multiple_files=
+        # Confusion Matrices
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+        sns.heatmap(confusion_matrix(y_val, clf.predict(X_val)), annot=True, fmt='d', ax=ax[0], cmap="Blues")
+        ax[0].set_title(f"{name} - Validation")
+        if X_test is not None:
+            sns.heatmap(confusion_matrix(y_test, clf.predict(X_test)), annot=True, fmt='d', ax=ax[1], cmap="Reds")
+            ax[1].set_title(f"{name} - HW2 Test")
+        figures[name] = fig
+            
+    return pd.DataFrame(report), figures
