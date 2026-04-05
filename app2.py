@@ -203,7 +203,7 @@ tab1, tab2, tab3 = st.tabs(["📂 Data", "🤖 Training", "🧪 Testing"])
 # DATA TAB
 # =========================
 with tab1:
-    train_files = st.file_uploader("Upload Testing Dataset (_g/_b)", accept_multiple_files=True)
+    train_files = st.file_uploader("Upload Training Dataset (_g/_b)", accept_multiple_files=True)
 
     if train_files:
         X, y = build_dataset(train_files)
@@ -294,7 +294,7 @@ with tab3:
     if "models" not in st.session_state:
         st.warning("Train models first.")
     else:
-        test_files = st.file_uploader("Upload Training Dataset", accept_multiple_files=True)
+        test_files = st.file_uploader("Upload Testing Dataset", accept_multiple_files=True)
 
         if test_files:
             X_test, y_test = build_dataset(test_files)
