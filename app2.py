@@ -11,124 +11,151 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
 import pandas as pd
+import io
 
-# --- SETTINGS & CONSTANTS ---
-MODELS = {
-    "KNN": KNeighborsClassifier(n_neighbors=3),
-    "Decision Tree": DecisionTreeClassifier(random_state=42),
-    "Logistic Regression": LogisticRegression(max_iter=1000),
-    "SVM": SVC(probability=True, kernel='rbf')
-}
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Advanced Composite Monitor", layout="wide", page_icon="🛡️")
 
-# --- FEATURE EXTRACTION ---
+# --- CORE FUNCTIONS ---
+
 def extract_features(signal, sr):
-    # MFCCs (13 coefficients)
+    """Extracts MFCCs and PSD Mean as a combined feature vector."""
     mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13), axis=1)
-    # PSD Mean
     psd = np.abs(np.fft.fft(signal))**2
     psd_mean = np.mean(psd)
     return np.hstack([mfcc, psd_mean])
 
-# --- TRAINING PIPELINE (Part 2) ---
-def train_and_evaluate(X, y, X_test_hw2=None, y_test_hw2=None):
-    results = {}
+def process_audio_files(uploaded_files, label):
+    """Processes multiple files into a feature matrix X and label vector y."""
+    features_list = []
+    for file in uploaded_files:
+        # Load audio (handles .m4a and .wav)
+        signal, sr = librosa.load(io.BytesIO(file.read()), sr=None)
+        
+        # Simple Noise Removal / Silence Trimming
+        yt, _ = librosa.effects.trim(signal, top_db=20)
+        
+        # Split hits (Basic onset detection)
+        onsets = librosa.onset.onset_detect(y=yt, sr=sr, units='samples')
+        for i in range(len(onsets)):
+            start = onsets[i]
+            end = onsets[i+1] if i+1 < len(onsets) else len(yt)
+            hit = yt[start:end]
+            
+            # Ensure hit is long enough for feature extraction
+            if len(hit) > 2048:
+                features_list.append(extract_features(hit, sr))
+                
+    X = np.array(features_list)
+    y = np.full(len(features_list), label)
+    return X, y
+
+# --- SIDEBAR & MODELS ---
+with st.sidebar:
+    st.header("⚙️ Model Configuration")
+    st.info("This system evaluates four classification architectures to determine the most robust detector.")
     
-    # Split 7:3 (Part 2, Task 3)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.3, shuffle=True, random_state=42
-    )
+    st.divider()
+    st.caption("Smart Materials and Structures Lab")
+    st.caption("University of Houston")
 
-    for name, model in MODELS.items():
-        # Train
-        model.fit(X_train, y_train)
-        
-        # Predict
-        train_preds = model.predict(X_train)
-        val_preds = model.predict(X_val)
-        
-        # Accuracy
-        acc_train = accuracy_score(y_train, train_preds)
-        acc_val = accuracy_score(y_val, val_preds)
-        
-        # Part 3: Robustness on HW2 Data
-        acc_test = None
-        cm_test = None
-        if X_test_hw2 is not None:
-            test_preds = model.predict(X_test_hw2)
-            acc_test = accuracy_score(y_test_hw2, test_preds)
-            cm_test = confusion_matrix(y_test_hw2, test_preds)
+# --- MAIN UI ---
+st.title("🛡️ Composite Structural Health Monitor")
+st.write("Upload acoustic percussion data to train and evaluate delamination detection models.")
 
-        results[name] = {
-            "model": model,
-            "acc_train": acc_train,
-            "acc_val": acc_val,
-            "acc_test": acc_test,
-            "cm_train": confusion_matrix(y_train, train_preds),
-            "cm_val": confusion_matrix(y_val, val_preds),
-            "cm_test": cm_test
-        }
-    return results
+# --- DATA UPLOAD TABS ---
+tab1, tab2 = st.tabs(["📁 Training Data (Current)", "📁 Robustness Test (Independent)"])
 
-# --- UI LOGIC ---
-st.title("🔊 Composite Structural Health Monitor: HW3 Edition")
-st.write("University of Houston | Smart Materials and Structures Lab")
+with tab1:
+    col_h, col_d = st.columns(2)
+    with col_h:
+        healthy_files = st.file_uploader("Upload Healthy Samples", accept_multiple_files=True, key="h1")
+    with col_d:
+        damaged_files = st.file_uploader("Upload Damaged Samples", accept_multiple_files=True, key="d1")
 
-# 1. DATA LOADING SECTION
-st.header("Step 1: Load Datasets")
-col1, col2 = st.columns(2)
-with col1:
-    hw3_files = st.file_uploader("Upload HW3 Data (Train/Val)", accept_multiple_files=True)
-with col2:
-    hw2_files = st.file_uploader("Upload HW2 Data (Independent Test)", accept_multiple_files=True)
+with tab2:
+    st.write("Upload a separate, unseen dataset to test model generalization.")
+    col_h2, col_d2 = st.columns(2)
+    with col_h2:
+        test_healthy = st.file_uploader("Upload Unseen Healthy", accept_multiple_files=True, key="h2")
+    with col_d2:
+        test_damaged = st.file_uploader("Upload Unseen Damaged", accept_multiple_files=True, key="d2")
 
-if hw3_files:
-    # This block assumes you have logic to extract features from all uploaded files
-    # For brevity, let's assume 'X_hw3', 'y_hw3' are generated from your 'extract_features' function
-    
-    # [Placeholder for your file processing loop to build X and y matrices]
-    # X_hw3 = np.array(all_features_hw3)
-    # y_hw3 = np.array(all_labels_hw3)
-    
-    if st.button("🚀 Run Multi-Model Analysis"):
-        # Run training
-        # results = train_and_evaluate(X_hw3, y_hw3, X_hw2, y_hw2)
-        
-        st.divider()
-        st.header("📊 Results Comparison")
-        
-        # --- ACCURACY TABLE (Part 3, Task 3) ---
-        data = []
-        for name, r in results.items():
-            drop = r['acc_val'] - r['acc_test'] if r['acc_test'] else 0
-            data.append({
-                "Model": name,
-                "Train Acc": f"{r['acc_train']:.2%}",
-                "Val Acc": f"{r['acc_val']:.2%}",
-                "Test (HW2) Acc": f"{r['acc_test']:.2%}" if r['acc_test'] else "N/A",
-                "Accuracy Drop": f"{drop:.2%}"
-            })
-        st.table(pd.DataFrame(data))
+# --- EXECUTION ---
+if st.button("🚀 Run Multi-Model Analysis", type="primary"):
+    if not (healthy_files and damaged_files):
+        st.warning("Please upload both Healthy and Damaged samples for training.")
+    else:
+        with st.spinner("Processing signals and training models..."):
+            # 1. Prepare Training/Validation Data
+            X_h, y_h = process_audio_files(healthy_files, 0)
+            X_d, y_d = process_audio_files(damaged_files, 1)
+            X_main = np.vstack([X_h, X_d])
+            y_main = np.hstack([y_h, y_d])
+            
+            # 2. Prepare Independent Test Data (if provided)
+            X_test_unseen, y_test_unseen = None, None
+            if test_healthy and test_damaged:
+                X_th, y_th = process_audio_files(test_healthy, 0)
+                X_td, y_td = process_audio_files(test_damaged, 1)
+                X_test_unseen = np.vstack([X_th, X_td])
+                y_test_unseen = np.hstack([y_th, y_td])
 
-        # --- CONFUSION MATRICES ---
-        st.header("📈 Confusion Matrices")
-        tabs = st.tabs(list(MODELS.keys()))
-        
-        for i, (name, r) in enumerate(results.items()):
-            with tabs[i]:
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.write("Training Set")
-                    fig, ax = plt.subplots()
-                    ConfusionMatrixDisplay(r['cm_train']).plot(ax=ax, cmap='Blues')
+            # 3. Train/Val Split (70/30)
+            X_train, X_val, y_train, y_val = train_test_split(X_main, y_main, test_size=0.3, shuffle=True, random_state=42)
+
+            # 4. Model Loop
+            models = {
+                "KNN": KNeighborsClassifier(n_neighbors=3),
+                "Decision Tree": DecisionTreeClassifier(random_state=42),
+                "Logistic Regression": LogisticRegression(max_iter=1000),
+                "SVM": SVC(probability=True)
+            }
+
+            results_data = []
+            
+            st.divider()
+            st.header("📊 Performance Metrics")
+            
+            # Define columns for Confusion Matrices
+            cm_cols = st.columns(len(models))
+
+            for idx, (name, clf) in enumerate(models.items()):
+                # Fit
+                clf.fit(X_train, y_train)
+                
+                # Accuracies
+                acc_train = accuracy_score(y_train, clf.predict(X_train))
+                acc_val = accuracy_score(y_val, clf.predict(X_val))
+                
+                acc_test = "N/A"
+                drop = "N/A"
+                
+                if X_test_unseen is not None:
+                    y_pred_unseen = clf.predict(X_test_unseen)
+                    acc_test_val = accuracy_score(y_test_unseen, y_pred_unseen)
+                    acc_test = f"{acc_test_val:.2%}"
+                    drop = f"{(acc_val - acc_test_val):.2%}"
+                
+                results_data.append({
+                    "Model": name,
+                    "Training Acc": f"{acc_train:.2%}",
+                    "Validation Acc": f"{acc_val:.2%}",
+                    "Unseen Test Acc": acc_test,
+                    "Robustness Drop": drop
+                })
+
+                # Plot Confusion Matrix in appropriate column
+                with cm_cols[idx]:
+                    st.subheader(name)
+                    cm = confusion_matrix(y_val, clf.predict(X_val))
+                    fig, ax = plt.subplots(figsize=(3, 3))
+                    ConfusionMatrixDisplay(cm).plot(ax=ax, colorbar=False, cmap='Blues')
+                    plt.title("Val Set CM")
                     st.pyplot(fig)
-                with c2:
-                    st.write("Validation Set")
-                    fig, ax = plt.subplots()
-                    ConfusionMatrixDisplay(r['cm_val']).plot(ax=ax, cmap='Greens')
-                    st.pyplot(fig)
-                with c3:
-                    if r['cm_test'] is not None:
-                        st.write("HW2 (Unseen) Test")
-                        fig, ax = plt.subplots()
-                        ConfusionMatrixDisplay(r['cm_test']).plot(ax=ax, cmap='Oranges')
-                        st.pyplot(fig)
+
+            # 5. Display Summary Table
+            st.subheader("Model Accuracy Comparison")
+            st.table(pd.DataFrame(results_data))
+            
+            st.success("Analysis Complete. Review the 'Robustness Drop'
