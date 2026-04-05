@@ -158,4 +158,4 @@ if st.button("🚀 Run Multi-Model Analysis", type="primary"):
             st.subheader("Model Accuracy Comparison")
             st.table(pd.DataFrame(results_data))
             
-            st.success("Analysis Complete. Review the 'Robustness Drop'
+            st.success("Analysis Complete. Review the 'Robustness Drop' to find the best generalizing model.")
