@@ -142,11 +142,11 @@ with st.sidebar:
 
     st.subheader("Signal Processing")
     with st.expander("What is the Time Domain?"):
-    st.write("""
-    **Observation:** Healthy blocks ring longer; damaged fade faster.
-    
-    **The Physics:** This is a plot of **Amplitude vs. Time**. In structural health monitoring, we look at the 'damping' ratio. A healthy composite plate is stiff and elastic, allowing energy to resonate. Delamination introduces internal friction and air gaps that absorb energy, causing the signal to decay (attenuate) much quicker.
-    """)
+        st.write("""
+        **Observation:** Healthy blocks ring longer; damaged fade faster.
+        
+        **The Physics:** This is a plot of **Amplitude vs. Time**. In structural health monitoring, we look at the 'damping' ratio. A healthy composite plate is stiff and elastic, allowing energy to resonate. Delamination introduces internal friction and air gaps that absorb energy, causing the signal to decay (attenuate) much quicker.
+        """)
 
     with st.expander("Frequency Graph (FFT)"):
         st.write("""
