@@ -142,16 +142,33 @@ with st.sidebar:
 
     st.subheader("Signal Processing")
     with st.expander("What is the Time Domain?"):
-        st.write("Healthy blocks ring longer; damaged fade faster.")
+    st.write("""
+    **Observation:** Healthy blocks ring longer; damaged fade faster.
+    
+    **The Physics:** This is a plot of **Amplitude vs. Time**. In structural health monitoring, we look at the 'damping' ratio. A healthy composite plate is stiff and elastic, allowing energy to resonate. Delamination introduces internal friction and air gaps that absorb energy, causing the signal to decay (attenuate) much quicker.
+    """)
 
-    with st.expander("Frequency Graph"):
-        st.write("Damage shifts energy lower.")
-
-    with st.expander("PSD"):
-        st.write("Shows energy strength across frequencies.")
-
-    with st.expander("MFCC"):
-        st.write("Acoustic fingerprint for ML.")
+    with st.expander("Frequency Graph (FFT)"):
+        st.write("""
+        **Observation:** Damage shifts resonance energy to lower frequencies.
+        
+        **The Physics:** Using the **Fast Fourier Transform (FFT)**, we move from time to the frequency spectrum. Because delamination reduces the effective stiffness ($k$) of the material, the natural resonance frequencies drop. A shift to the left in the primary peaks is a classic indicator of internal structural failure.
+        """)
+    
+    with st.expander("Power Spectral Density (PSD)"):
+        st.write("""
+        **Observation:** Shows energy strength and distribution across frequencies.
+        
+        **The Physics:** While FFT shows individual peaks, **PSD** (calculated via Welch's method) provides a cleaner, averaged power estimate. It helps distinguish between true structural resonance and random background noise. Lower power in high-frequency bands often suggests the material can no longer support high-frequency vibrations due to damage.
+        """)
+    
+    with st.expander("MFCC (Acoustic Fingerprint)"):
+        st.write("""
+        **Observation:** The 'Acoustic Fingerprint' used for Machine Learning.
+        
+        **The Physics:** **Mel-Frequency Cepstral Coefficients** compress the complex audio signal into 13-14 key features that mimic how human hearing perceives sound. By extracting these coefficients, we create a mathematical signature of the 'hit' that models like **SVM** or **KNN** can use to classify the health of the cell.
+        """)
+        
     with st.expander("1. K-Nearest Neighbors (KNN)"):
         st.write("""
         **How it works:** It looks at the '14-dimensional' fingerprint (MFCC + PSD) of a new hit and finds the 5 most similar sounds in the training data.
@@ -176,9 +193,6 @@ with st.sidebar:
         **In this project:** Using a **Radial Basis Function (RBF)** kernel allows it to find complex patterns. It is typically the most robust model for unseen data (Part 3).
         """)
     
-
-    st.subheader("ML Models")
-    st.write("KNN, DT, LR, SVM")
 
 # =========================
 # TABS
