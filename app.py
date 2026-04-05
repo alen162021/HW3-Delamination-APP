@@ -157,7 +157,31 @@ if uploaded_files:
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Settings & Info")
-    st.info("This tool uses multi-domain analysis to detect delamination in composite structures.")
+    st.image("https://upload.wikimedia.org/wikipedia/en/thumb/0/0b/University_of_Houston_logo.svg/1200px-University_of_Houston_logo.svg.png", width=100)
+    st.header("🔍 Analysis Overview")
+    st.markdown("""
+    This application uses **Acoustic Emission Spectroscopy** and **Machine Learning** to identify internal structural failures (delamination) in composite materials.
+    """)
+
     st.divider()
-    st.caption("Developed for University of Houston | Smart Materials Lab")
+
+    # --- Section: The Three Domains ---
+    st.subheader("📖 Understanding the Domains")
+    
+    with st.expander("1. Time Domain"):
+        st.write("""
+        **What it is:** A plot of signal amplitude over time.
+        **What to look for:** Healthy samples ring like a bell (slow, consistent decay). Damaged samples sound "thuddy" and decay rapidly due to internal friction.
+        """)
+
+    with st.expander("2. Frequency Domain"):
+        st.write("""
+        **What it is:** The 'Recipe' of the sound (FFT/PSD).
+        **What to look for:** Delamination reduces the stiffness of the material. This physical change causes the dominant resonance peaks to shift to **lower frequencies**.
+        """)
+
+    with st.expander("3. Time-Frequency Domain"):
+        st.write("""
+        **What it is:** A map showing how frequencies change over time (STFT/CWT).
+        **Why use it?** Unlike a static graph, this shows 'transient' events. We use **MFCCs** (Mel-Frequency Cepstral Coefficients) to extract a unique 'acoustic fingerprint' for the AI.
+        """)
