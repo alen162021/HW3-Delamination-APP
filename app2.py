@@ -152,6 +152,30 @@ with st.sidebar:
 
     with st.expander("MFCC"):
         st.write("Acoustic fingerprint for ML.")
+    with st.expander("1. K-Nearest Neighbors (KNN)"):
+        st.write("""
+        **How it works:** It looks at the '14-dimensional' fingerprint (MFCC + PSD) of a new hit and finds the 5 most similar sounds in the training data.
+        **In this project:** If the closest 5 hits were mostly 'Damaged,' it classifies the new hit as Damaged. It is simple but sensitive to noisy recordings.
+        """)
+    
+    with st.expander("2. Decision Tree (DT)"):
+        st.write("""
+        **How it works:** A flowchart of 'if-then' rules (e.g., *Is the PSD mean < X? Is the 1st MFCC > Y?*).
+        **In this project:** It is very fast and easy to interpret, but prone to **overfitting**, meaning it might "memorize" the specific noise of your HW3 dataset rather than learning general rules.
+        """)
+    
+    with st.expander("3. Logistic Regression (LR)"):
+        st.write("""
+        **How it works:** A statistical model that calculates the probability (0 to 1) of a sample being 'Healthy' or 'Damaged' based on a weighted sum of features.
+        **In this project:** It provides a clear "decision boundary." It is often more robust than a Decision Tree because it doesn't over-react to single outlier hits.
+        """)
+    
+    with st.expander("4. Support Vector Machine (SVM)"):
+        st.write("""
+        **How it works:** It finds the optimal "gap" or hyperplane that separates the Healthy data points from the Damaged ones in a high-dimensional space.
+        **In this project:** Using a **Radial Basis Function (RBF)** kernel allows it to find complex patterns. It is typically the most robust model for unseen data (Part 3).
+        """)
+    
 
     st.subheader("ML Models")
     st.write("KNN, DT, LR, SVM")
