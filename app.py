@@ -5,9 +5,10 @@ import librosa.display
 import joblib
 import matplotlib.pyplot as plt
 import tempfile
+import scipy.signal as signal_lib
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Delamination Detector", layout="wide", page_icon="🔊")
+st.set_page_config(page_title="Delamination Detector Pro", layout="wide", page_icon="🔊")
 
 # --- LOAD MODEL ---
 @st.cache_resource
@@ -17,181 +18,146 @@ def load_model():
 try:
     model = load_model()
 except Exception:
-    st.error("Error: Could not find 'model.pkl'. Make sure it is uploaded to your repo.")
+    st.error("Error: Could not find 'model.pkl'.")
     st.stop()
 
-# --- AUDIO LOADING (FIXED FOR M4A/WAV) ---
+# --- AUDIO LOADING ---
 def load_audio(file):
     suffix = "." + file.name.split(".")[-1]
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(file.read())
         tmp_path = tmp.name
-
-    signal, sr = librosa.load(tmp_path, sr=22050)
-    return signal, sr
+    sig, sr = librosa.load(tmp_path, sr=22050)
+    return sig, sr
 
 # --- HIT DETECTION ---
-def split_hits(signal, sr):
-    signal = signal / (np.max(np.abs(signal)) + 1e-9)
-
-    frame_length = int(0.02 * sr)
-    hop_length = int(0.01 * sr)
-
-    energy = librosa.feature.rms(
-        y=signal,
-        frame_length=frame_length,
-        hop_length=hop_length
-    )[0]
-
+def split_hits(sig, sr):
+    sig_norm = sig / (np.max(np.abs(sig)) + 1e-9)
+    energy = librosa.feature.rms(y=sig_norm, frame_length=441, hop_length=220)[0]
     indices = np.where(energy > np.mean(energy) * 1.5)[0]
-
-    if len(indices) == 0:
-        return [], []
-
+    if len(indices) == 0: return [], []
     segments = np.split(indices, np.where(np.diff(indices) > 2)[0] + 1)
-
     hits, boundaries = [], []
     for seg in segments:
-        start = seg[0] * hop_length
-        end = seg[-1] * hop_length
-        hit = signal[start:end]
-
+        start, end = seg[0] * 220, seg[-1] * 220
+        hit = sig_norm[start:end]
         if len(hit) > 200:
-            hits.append(hit)
-            boundaries.append((start, end))
-
+            hits.append(hit); boundaries.append((start, end))
     return hits, boundaries
 
-# --- FEATURE EXTRACTION ---
-def extract_features(signal, sr):
-    mfcc = np.mean(librosa.feature.mfcc(y=signal, sr=sr, n_mfcc=13), axis=1)
-    psd_mean = np.mean(np.abs(np.fft.fft(signal))**2)
-    return np.hstack([mfcc, psd_mean])
+# --- UI HEADER ---
+st.title("🔊 Composite Structural Health Monitor: Advanced Analysis")
+st.markdown("---")
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("🔍 Science Behind the Sound")
+uploaded_files = st.file_uploader("Upload Audio (.wav or .m4a)", type=["wav", "m4a"], accept_multiple_files=True)
 
-    with st.expander("What is the Time Domain?"):
-        st.write("Healthy blocks ring longer; damaged ones decay faster due to internal energy loss.")
-
-    with st.expander("What is the Frequency Graph?"):
-        st.write("Damage reduces stiffness → shifts energy to lower frequencies.")
-
-    with st.expander("What are MFCCs?"):
-        st.write("MFCCs capture the acoustic fingerprint used by the AI for classification.")
-
-    st.divider()
-    st.caption("""
-    Sponsored by Teaching Innovation Program (TIP),  
-    Smart Materials and Structures Lab,  
-    University of Houston
-    """)
-
-# --- MAIN UI ---
-st.title("🔊 Composite Structural Health Monitor")
-st.write("Upload percussion recordings to detect internal defects.")
-
-uploaded_files = st.file_uploader(
-    "Upload Audio (.wav or .m4a)",
-    type=["wav", "m4a"],
-    accept_multiple_files=True
-)
-
-# --- PROCESS FILES ---
 if uploaded_files:
     for file in uploaded_files:
-
-        with st.expander(f"Analysis: {file.name}", expanded=True):
-
-            signal, sr = load_audio(file)
-            hits, boundaries = split_hits(signal, sr)
+        with st.expander(f"Detailed Analysis: {file.name}", expanded=True):
+            sig, sr = load_audio(file)
+            hits, boundaries = split_hits(sig, sr)
 
             if not hits:
                 st.warning("No hits detected.")
                 continue
 
-            # --- FEATURE EXTRACTION ---
-            features = [extract_features(h, sr) for h in hits]
-
+            # Prediction Logic
+            features = [np.hstack([np.mean(librosa.feature.mfcc(y=h, sr=sr, n_mfcc=13), axis=1), 
+                                  np.mean(np.abs(np.fft.fft(h))**2)]) for h in hits]
             preds = model.predict(features)
+            is_bad = np.mean(preds) > 0.5
+            
+            # --- 2. PRESENT DATA ANALYSIS RESULTS ---
+            st.header("2. Data Analysis Results")
+            
+            # A. Time Domain
+            st.subheader("A. Time Domain (Time Series)")
+            fig_t, ax_t = plt.subplots(figsize=(10, 3))
+            ax_t.plot(sig, color='gray', alpha=0.5, label="Raw Signal")
+            for start, end in boundaries:
+                ax_t.axvspan(start, end, color='red' if is_bad else 'green', alpha=0.3)
+            st.pyplot(fig_t)
 
-            # --- CONFIDENCE (FIXED) ---
-            if hasattr(model, "predict_proba"):
-                probs = model.predict_proba(features)[:, 1]
-                confidence = np.mean(probs)
-            else:
-                confidence = np.mean(preds)
+            # B. Frequency Domain
+            st.subheader("B. Frequency Domain (FFT & PSD)")
+            col_f1, col_f2 = st.columns(2)
+            sample_hit = hits[0]
+            fft_res = np.abs(np.fft.fft(sample_hit))
+            freqs = np.fft.fftfreq(len(sample_hit), 1/sr)
+            
+            with col_f1:
+                fig_fft, ax_fft = plt.subplots()
+                ax_fft.plot(freqs[:len(freqs)//2], fft_res[:len(fft_res)//2])
+                ax_fft.set_title("Fast Fourier Transform (FFT)")
+                st.pyplot(fig_fft)
+            with col_f2:
+                fig_psd, ax_psd = plt.subplots()
+                f, Pxx_den = signal_lib.welch(sample_hit, sr)
+                ax_psd.semilogy(f, Pxx_den)
+                ax_psd.set_title("Power Spectral Density (PSD)")
+                st.pyplot(fig_psd)
 
-            is_bad = confidence > 0.5
+            # C. Time-Frequency Domain
+            st.subheader("C. Time-Frequency Domain")
+            tabs = st.tabs(["STFT", "CWT (Approximation)", "MFCC"])
+            
+            with tabs[0]:
+                fig_stft, ax_stft = plt.subplots()
+                D = librosa.amplitude_to_db(np.abs(librosa.stft(sample_hit)), ref=np.max)
+                librosa.display.specshow(D, sr=sr, x_axis='time', y_axis='hz', ax=ax_stft)
+                st.pyplot(fig_stft)
+            
+            with tabs[1]:
+                # Using a Scalogram approach via librosa CQT as a proxy for CWT
+                fig_cwt, ax_cwt = plt.subplots()
+                C = librosa.amplitude_to_db(np.abs(librosa.cqt(sample_hit, sr=sr)), ref=np.max)
+                librosa.display.specshow(C, sr=sr, x_axis='time', y_axis='cqt_note', ax=ax_cwt)
+                ax_cwt.set_title("Constant-Q Transform (CWT-like)")
+                st.pyplot(fig_cwt)
+                
+            with tabs[2]:
+                fig_mfcc, ax_mfcc = plt.subplots()
+                mfccs = librosa.feature.mfcc(y=sample_hit, sr=sr, n_mfcc=13)
+                librosa.display.specshow(mfccs, x_axis='time', ax=ax_mfcc)
+                ax_mfcc.set_title("MFCC Coefficients")
+                st.pyplot(fig_mfcc)
 
-            # --- RESULTS DISPLAY ---
-            col_res, col_plot = st.columns([1, 1.5])
-
-            with col_res:
+            # --- 3. OBSERVATION AND DISCUSSION ---
+            st.markdown("---")
+            st.header("3. Observation and Discussion")
+            
+            obs_col1, obs_col2 = st.columns(2)
+            
+            with obs_col1:
+                st.subheader("A. Comparison of Methods")
+                st.write("""
+                * **Time Domain:** Best for identifying transient hits and decay rates, but lacks depth regarding material stiffness.
+                * **Frequency Domain (FFT/PSD):** Excellent for identifying resonance shifts. PSD provides a cleaner, averaged power estimate than raw FFT.
+                * **Time-Frequency:** Essential for non-stationary signals. **STFT** provides linear resolution, while **CWT** is better for capturing high-frequency transients. **MFCC** compresses this data into a 'fingerprint' ideal for ML.
+                """)
+            
+            with obs_col2:
+                st.subheader("B. Healthy vs. Unhealthy Analysis")
                 if is_bad:
-                    st.error("### ❌ DEFECT DETECTED")
-                    st.metric("Confidence (Damage)", f"{confidence*100:.1f}%")
+                    st.warning("**Current Sample: Unhealthy (Defect Detected)**")
+                    st.write("""
+                    - **Time:** Noticeable attenuation or irregular amplitude spikes.
+                    - **Frequency:** Shift in peak frequencies toward the lower end (loss of stiffness).
+                    - **Time-Frequency:** High-frequency energy dissipates more rapidly compared to healthy signatures.
+                    """)
                 else:
-                    st.success("### ✅ HEALTHY")
-                    st.metric("Confidence (Healthy)", f"{(1-confidence)*100:.1f}%")
+                    st.success("**Current Sample: Healthy**")
+                    st.write("""
+                    - **Time:** Consistent, clean logarithmic decay.
+                    - **Frequency:** High-energy peaks at expected fundamental frequencies.
+                    - **Time-Frequency:** Stable harmonics across the duration of the hit.
+                    """)
 
-                st.info(f"Analyzed {len(hits)} hits")
+            st.caption("**Note:** These results are based on a limited dataset and may not be representative of all material types or defect geometries.")
 
-            # --- TIME DOMAIN PLOT ---
-            with col_plot:
-                fig, ax = plt.subplots(figsize=(7, 2.5))
-                ax.plot(signal, color='gray', alpha=0.4)
-
-                for start, end in boundaries:
-                    ax.axvspan(start, end,
-                               color='red' if is_bad else 'green',
-                               alpha=0.3)
-
-                ax.set_title("Detected Hits (Time Domain)")
-                ax.set_axis_off()
-                st.pyplot(fig)
-
-            # --- PER-HIT RESULTS ---
-            st.subheader("📊 Per-Hit Predictions")
-
-            good_hits = np.sum(preds == 0)
-            bad_hits = np.sum(preds == 1)
-
-            for i, p in enumerate(preds):
-                label = "BAD" if p == 1 else "GOOD"
-                st.write(f"Hit {i+1}: {label}")
-
-            # --- DISTRIBUTION ---
-            st.subheader("📈 Hit Distribution")
-
-            st.write(f"GOOD hits: {good_hits}")
-            st.write(f"BAD hits: {bad_hits}")
-
-            st.bar_chart({
-                "GOOD": good_hits,
-                "BAD": bad_hits
-            })
-
-            # --- DETAILED GRAPHS ---
-            c1, c2 = st.columns(2)
-
-            with c1:
-                st.caption("MFCC (Acoustic Fingerprint)")
-                mfcc_vis = librosa.feature.mfcc(y=hits[0], sr=sr, n_mfcc=13)
-                fig_m, ax_m = plt.subplots(figsize=(5, 2))
-                librosa.display.specshow(mfcc_vis, ax=ax_m)
-                st.pyplot(fig_m)
-
-            with c2:
-                st.caption("Frequency Energy (PSD)")
-                fft = np.abs(np.fft.fft(hits[0]))**2
-                freqs = np.fft.fftfreq(len(hits[0]), 1/sr)
-
-                fig_f, ax_f = plt.subplots(figsize=(5, 2))
-                ax_f.plot(freqs[:len(freqs)//2],
-                          fft[:len(fft)//2],
-                          color='purple')
-                ax_f.set_xlim(0, 4000)
-                st.pyplot(fig_f)
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Settings & Info")
+    st.info("This tool uses multi-domain analysis to detect delamination in composite structures.")
+    st.divider()
+    st.caption("Developed for University of Houston | Smart Materials Lab")
