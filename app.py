@@ -185,3 +185,10 @@ with st.sidebar:
         **What it is:** A map showing how frequencies change over time (STFT/CWT).
         **Why use it?** Unlike a static graph, this shows 'transient' events. We use **MFCCs** (Mel-Frequency Cepstral Coefficients) to extract a unique 'acoustic fingerprint' for the AI.
         """)
+    st.caption("""
+    **Project Credits:**
+    - Teaching Innovation Program (TIP)
+    - Smart Materials and Structures Lab
+    - Artificial Intelligent Laboratory for Monitoring and Inspection
+    - **University of Houston**
+    """)
